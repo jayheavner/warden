@@ -60,6 +60,8 @@ sudo warden refresh              # re-derive policy after cloning or restructuri
 warden land <branch>             # integrate finished work (see Integration lanes)
 warden remote add <name> <url>   # add a git remote to a shared checkout (daemon-mediated)
 warden forget <repo>             # drop a learned integration lesson for a repo
+sudo warden disable               # pause all enforcement machine-wide (failsafe)
+sudo warden enable                # re-arm enforcement with a fresh policy render
 ```
 
 `sudo warden refresh` re-scans your repos and regenerates the policy. A
@@ -86,6 +88,27 @@ its own managed-config layer: a root-owned `/etc/codex/requirements.toml` that
 outranks all user config and delivers an equivalent deny-write policy plus a
 managed `PreToolUse` hook. The path classifier is shared byte-for-byte between
 the two harnesses — one renderer, two policy formats.
+
+## Failsafe
+
+If Warden's policy is wrong or its refresh daemon is wedged, `sudo warden
+disable` is a machine-wide pause switch that Warden itself cannot block —
+it runs from a plain, unsandboxed terminal. It's sticky until you run
+`sudo warden enable`; there's no timer and no auto-re-arm.
+
+Disabling takes effect live for the tool guard, the Codex guard, and the
+git reference-transaction hook. Sessions that were already running keep
+their original Bash sandbox until they're restarted — a disabled session
+stays sandboxed, and (symmetrically) a session started while disabled stays
+unsandboxed after you re-enable, until you restart it. `sudo warden enable`
+always re-derives the policy from a fresh scan rather than re-arming
+whatever was rendered before the disable, since your repo layout may have
+changed in the meantime.
+
+While disabled, `warden status` reports `state: DISABLED since <date>` as
+its first line and exits with status 2, so scripts can detect it. For a
+wrong denial caused by stale policy, try `sudo warden refresh` first — it's
+cheaper than a full disable and is Warden's first-line remediation.
 
 ## Integration lanes
 
@@ -126,6 +149,7 @@ against multiple git versions, with recorded evidence.
 ## Documentation
 
 - [Scope and limitations](docs/limitations.md) — the edges of what Warden governs
+- [Disable failsafe](docs/disable-failsafe.md) — the machine-wide pause switch
 - [Session isolation](docs/session-isolation.md) — the core design: threat model, enforcement layers, evidence
 - [Integration lanes](docs/integration-lanes.md) — how `warden land` resolves each repo's integration path
 - [v1.1 hardening](docs/v1.1-hardening.md) — the git-ref hook, auto-refresh daemon, and their design

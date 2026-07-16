@@ -499,6 +499,21 @@ class TestRemoteAdd(unittest.TestCase):
                                url=url)
             self.assertEqual(res["status"], "remote-added", res)
 
+    def test_scan_queue_routes_remote_request(self):
+        q = os.path.join(self.tmp.name, "queue")
+        os.makedirs(q)
+        req = os.path.join(q, "remote-1.json")
+        json.dump({"op": "remote-add", "repo": self.repo, "name": "origin",
+                   "url": "https://github.com/jayheavner/warden.git"},
+                  open(req, "w"))
+        landd.scan_queue(q, self.registry, demote=False)
+        res = json.load(open(req + ".result"))
+        self.assertEqual(res["status"], "remote-added", res)
+        self.assertFalse(os.path.exists(req))  # consumed
+        self.assertEqual(out("git", "-C", self.repo, "remote", "get-url",
+                             "origin"),
+                         "https://github.com/jayheavner/warden.git")
+
     def test_only_remote_section_changes(self):
         cfg = os.path.join(self.repo, ".git", "config")
         before = open(cfg).read()

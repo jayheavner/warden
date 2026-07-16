@@ -353,12 +353,16 @@ def scan_queue(queue, registry, demote=True):
     if not os.path.isdir(queue):
         return
     for name in sorted(os.listdir(queue)):
-        if not (name.startswith("land-") and name.endswith(".json")):
+        if not (name.startswith(("land-", "remote-"))
+                and name.endswith(".json")):
             continue
         req_path = os.path.join(queue, name)
         try:
             req = json.load(open(req_path))
-            res = process_request(req, registry, demote=demote)
+            if req.get("op") == "remote-add":
+                res = process_remote_request(req, registry, demote=demote)
+            else:
+                res = process_request(req, registry, demote=demote)
         except ValueError:
             res = {"status": "rejected", "reason": "request is not JSON"}
         except Exception as exc:

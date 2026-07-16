@@ -108,6 +108,46 @@ EOF
     echo "warden land: no response from landing daemon after 90s — is com.warden.landd loaded?" >&2
     exit 1
     ;;
+  remote)
+    # mediated .git/config write: sessions can't touch the shared checkout's
+    # config (denyWrite), so the root daemon validates and applies
+    # remote.<name>.url — and nothing else — on request
+    if [ "${2:-}" != "add" ] || [ -z "${3:-}" ] || [ -z "${4:-}" ]; then
+      echo "usage: warden remote add <name> <url>" >&2; exit 2
+    fi
+    NAME="$3"; URL="$4"
+    COMMON=$(git rev-parse --git-common-dir) || exit 2
+    REPO=$(cd "$COMMON/.." && pwd -P)
+    Q="${WARDEN_LAND_QUEUE:-/tmp/claude/warden-land}"
+    mkdir -p "$Q"
+    REQ="$Q/remote-$$-$(date +%s).json"
+    python3 - "$REQ" "$REPO" "$NAME" "$URL" <<'EOF'
+import json, sys
+json.dump({"op": "remote-add", "repo": sys.argv[2], "name": sys.argv[3],
+           "url": sys.argv[4]}, open(sys.argv[1], "w"))
+EOF
+    echo "warden remote: requested $NAME = $URL in $(basename "$REPO")"
+    for _ in $(seq 1 90); do
+      if [ -f "$REQ.result" ]; then
+        SUMMARY=$(python3 - "$REQ.result" <<'EOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+ok = d["status"] in ("remote-added", "remote-updated", "unchanged")
+print("OK" if ok else "NO")
+print(d["status"])
+print(d.get("reason") or d.get("previous") and "was %s" % d["previous"] or "")
+EOF
+)
+        rm -f "$REQ.result" 2>/dev/null || true
+        VERDICT=$(echo "$SUMMARY" | sed -n 1p)
+        echo "$SUMMARY" | sed -n '2s/^/warden remote: /p;3s/^/  /p'
+        [ "$VERDICT" = "OK" ] && exit 0 || exit 1
+      fi
+      sleep 1
+    done
+    echo "warden remote: no response from landing daemon after 90s — is com.warden.landd loaded?" >&2
+    exit 1
+    ;;
   forget)
     # drop a learned lane lesson so inference runs fresh on the next land
     [ -n "${2:-}" ] || { echo "usage: warden forget <repo-root>" >&2; exit 2; }
@@ -198,7 +238,7 @@ EOF
     fi
     ;;
   *)
-    echo "usage: warden {refresh|land [branch]|forget <repo>|selftest|status}" >&2
+    echo "usage: warden {refresh|land [branch]|remote add <name> <url>|forget <repo>|selftest|status}" >&2
     exit 2
     ;;
 esac

@@ -65,5 +65,17 @@ rm "$T/main/.git/hooks/reference-transaction"
 WARDEN_AUDIT_FILE=/dev/null/nope git update-ref refs/heads/side HEAD 2>/dev/null \
   && fail "deny with broken audit" "succeeded" || pass "deny with broken audit"
 
+# 12: sentinel disables classification, chains repo hook, then regression (sentinel unset still denies)
+printf '{"disabled_at":"x","by_uid":0}' > "$T/sentinel"
+WARDEN_SENTINEL="$T/sentinel" git update-ref refs/heads/side HEAD 2>"$T/err13"
+if [ "$(cat "$T/err13")" = "warden: disabled — ref protection off" ]; then
+  pass "sentinel: exact notice"
+else
+  fail "sentinel: exact notice" "$(cat "$T/err13")"
+fi
+git update-ref refs/heads/side HEAD~1 2>/dev/null
+git update-ref refs/heads/side HEAD 2>/dev/null && fail "sentinel: regression still denies" "succeeded" || pass "sentinel: regression still denies"
+rm -f "$T/sentinel"
+
 echo "== $PASSN pass, $FAILN fail"
 [ "$FAILN" -eq 0 ]

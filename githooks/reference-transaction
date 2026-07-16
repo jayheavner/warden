@@ -7,8 +7,12 @@
 state="${1:-}"
 input="$(cat 2>/dev/null || true)"
 
+sentinel="${WARDEN_SENTINEL:-/Library/Application Support/ClaudeCode/warden/DISABLED}"
+warden_disabled=""
+[ -f "$sentinel" ] && warden_disabled=1
+
 deny_reason=""
-if [ "$state" = "prepared" ]; then
+if [ "$state" = "prepared" ] && [ -z "$warden_disabled" ]; then
   wtlist="$(git worktree list --porcelain 2>/dev/null || true)"   # once per transaction
   here="$(git rev-parse --show-toplevel 2>/dev/null || true)"
   if [ -n "$wtlist" ] && [ -n "$here" ]; then
@@ -46,6 +50,10 @@ PY
     logger -t warden "R1 deny: cwd=$PWD" 2>/dev/null
   } || true
   exit 1
+fi
+
+if [ -n "$warden_disabled" ] && [ "$state" = "prepared" ]; then
+  printf 'warden: disabled — ref protection off\n' >&2
 fi
 
 # Chain to the repo's own reference-transaction hook (common hooks dir — NOT

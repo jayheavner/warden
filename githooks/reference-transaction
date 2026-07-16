@@ -1,0 +1,60 @@
+#!/bin/bash
+# warden R1 hook (reference-transaction): refuse moving refs/heads/<b> when
+# <b> is checked out in a worktree other than the one this command runs in.
+# Fail-open: any internal error exits 0 (a broken hook must never become a
+# machine-wide git outage); exit 1 only on positive classification.
+# Chains to the repo's own hook afterward. Spec: v1.1 design section 3.
+state="${1:-}"
+input="$(cat 2>/dev/null || true)"
+
+deny_reason=""
+if [ "$state" = "prepared" ]; then
+  wtlist="$(git worktree list --porcelain 2>/dev/null || true)"   # once per transaction
+  here="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$wtlist" ] && [ -n "$here" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      ref="${line##* }"
+      case "$ref" in refs/heads/*) ;; *) continue ;; esac
+      wt="$(printf '%s\n' "$wtlist" | awk -v want="branch $ref" '
+        index($0, "worktree ") == 1 { w = substr($0, 10) }
+        $0 == want { print w; exit }')"
+      [ -n "$wt" ] || continue                                    # detached/unmatched: no opinion
+      if [ "$wt" != "$here" ]; then
+        deny_reason="warden R1: refusing to move $ref — that branch is checked out at $wt and this command runs at $here. Commit in that worktree instead."
+        break
+      fi
+    done <<INPUT
+$input
+INPUT
+  fi
+fi
+
+if [ -n "$deny_reason" ]; then
+  printf '%s\n' "$deny_reason" >&2
+  audit="${WARDEN_AUDIT_FILE:-$HOME/.claude/warden/audit.jsonl}"
+  {
+    mkdir -p "$(dirname "$audit")" 2>/dev/null
+    python3 - "$audit" "$PWD" "$deny_reason" <<'PY' 2>/dev/null
+import datetime, json, sys
+rec = {"ts": datetime.datetime.now().astimezone().isoformat(),
+       "session_id": "", "cwd": sys.argv[2],
+       "tool": "git-reference-transaction", "target": sys.argv[3],
+       "verdict": "deny", "rule": "R1"}
+open(sys.argv[1], "a").write(json.dumps(rec, ensure_ascii=False) + "\n")
+PY
+    logger -t warden "R1 deny: cwd=$PWD" 2>/dev/null
+  } || true
+  exit 1
+fi
+
+# Chain to the repo's own reference-transaction hook (common hooks dir — NOT
+# core.hooksPath, which points back at us).
+common="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+self_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
+repo_hook="$common/hooks/reference-transaction"
+if [ -n "$common" ] && [ -x "$repo_hook" ] && [ "$common/hooks" != "$self_dir" ]; then
+  printf '%s\n' "$input" | "$repo_hook" "$state"
+  exit $?
+fi
+exit 0

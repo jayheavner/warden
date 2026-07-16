@@ -48,6 +48,11 @@ case "${1:-status}" in
         chmod 0644 "$DEST/managed-settings.json" "$WD/registry.json" "$WD/warden.gitconfig"
       fi
       health ok "$WD/registry.json" "$DEST/managed-settings.json"
+      # remoted repos: catch shared checkouts up with origin (pr-lane repos
+      # otherwise go stale between lands)
+      if [ -f "$WD/landd.py" ]; then
+        python3 "$WD/landd.py" --sync-all || true
+      fi
       python3 - "$WD/registry.json" <<'PY'
 import json, sys
 reg = json.load(open(sys.argv[1]))
@@ -78,15 +83,46 @@ EOF
     echo "warden land: requested $BRANCH -> $(basename "$REPO") HEAD branch"
     for _ in $(seq 1 90); do
       if [ -f "$REQ.result" ]; then
-        STATUS=$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d["status"]);print(d.get("reason") or d.get("sha",""))' "$REQ.result")
+        SUMMARY=$(python3 - "$REQ.result" <<'EOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+ok = d["status"] in ("landed", "landed-remote-only", "pr-opened",
+                     "pr-exists", "branch-pushed")
+line = d["status"]
+if d.get("url"):
+    line += " " + d["url"]
+if d.get("account"):
+    line += " (as %s)" % d["account"]
+print("OK" if ok else "NO")
+print(line)
+print(d.get("reason") or d.get("sha") or "")
+EOF
+)
         rm -f "$REQ.result" 2>/dev/null || true
-        echo "$STATUS" | sed -n '1s/^/warden land: /p;2s/^/  /p'
-        [ "$(echo "$STATUS" | head -1)" = "landed" ] && exit 0 || exit 1
+        VERDICT=$(echo "$SUMMARY" | sed -n 1p)
+        echo "$SUMMARY" | sed -n '2s/^/warden land: /p;3s/^/  /p'
+        [ "$VERDICT" = "OK" ] && exit 0 || exit 1
       fi
       sleep 1
     done
     echo "warden land: no response from landing daemon after 90s — is com.warden.landd loaded?" >&2
     exit 1
+    ;;
+  forget)
+    # drop a learned lane lesson so inference runs fresh on the next land
+    [ -n "${2:-}" ] || { echo "usage: warden forget <repo-root>" >&2; exit 2; }
+    if [ -z "${WARDEN_DEST:-}" ] && [ "$(id -u)" -ne 0 ]; then
+      echo "run: sudo warden forget $2" >&2; exit 1
+    fi
+    PYTHONPATH="$WD" exec python3 - "$2" <<'EOF'
+import json, sys
+import landd
+entry = landd.forget(sys.argv[1])
+if entry is None:
+    print("warden forget: no lesson recorded for %s" % sys.argv[1])
+else:
+    print("warden forget: dropped %s" % json.dumps(entry))
+EOF
     ;;
   selftest)
     exec bash "$WD/selftest.sh"
@@ -146,9 +182,23 @@ PY
     else
       echo "hook delivery: not rendered"
     fi
+    if [ -f "$WD/lanes.py" ]; then
+      PYTHONPATH="$WD" python3 - "$WD/registry.json" <<'EOF' || true
+import json, sys
+import lanes
+try:
+    repos = json.load(open(sys.argv[1])).get("repos", [])
+except (OSError, ValueError):
+    repos = []
+for r in repos:
+    res = lanes.resolve(r["root"])
+    print("  lane %-5s (%s)  %s" % (res["lane"], res["provenance"],
+                                    r["root"]))
+EOF
+    fi
     ;;
   *)
-    echo "usage: warden {refresh|land [branch]|selftest|status}" >&2
+    echo "usage: warden {refresh|land [branch]|forget <repo>|selftest|status}" >&2
     exit 2
     ;;
 esac

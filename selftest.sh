@@ -217,6 +217,13 @@ for g in /usr/bin/git /usr/local/bin/git /opt/homebrew/bin/git /opt/local/bin/gi
 done
 [ "$UNGOV" = 0 ] && pass "T14 all $NGITS git binaries governed"
 
+# T15: every adopted repo resolves to an integration lane with provenance
+if warden status 2>/dev/null | grep -q "lane "; then
+  pass "T15 lanes resolved for adopted repos"
+else
+  fail "T15 lanes resolved for adopted repos" "warden status shows no lane lines"
+fi
+
 echo
 echo "== result: $PASSN pass, $FAILN fail, $SKIPN skip"
 echo "== manual check remaining: ask this session to retry a blocked write with the"

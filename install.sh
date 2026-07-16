@@ -11,7 +11,7 @@ WD="$DEST/warden"
 SCAN_HOME="${SUDO_USER:+/Users/$SUDO_USER}"
 SCAN_HOME="${SCAN_HOME:-$HOME}"
 SCAN_DIR="${WARDEN_SCAN_DIR:-$SCAN_HOME/claude}"
-FILES=(guard.py render.py selftest.sh uninstall.sh gitconfig-include.sh templates/managed-settings.base.json templates/hookpath.gitconfig)
+FILES=(guard.py render.py landd.py lanes.py selftest.sh uninstall.sh gitconfig-include.sh templates/managed-settings.base.json templates/hookpath.gitconfig)
 
 if [ "${1:-}" = "--print-plan" ]; then
   printf 'would install to %s:\n' "$WD"
@@ -19,6 +19,7 @@ if [ "${1:-}" = "--print-plan" ]; then
   printf '  bin/warden -> /usr/local/bin/warden\n'
   printf '  githooks/ (reference-transaction + dispatchers)\n'
   printf '  /Library/LaunchDaemons/com.warden.refresh.plist (WatchPaths %s)\n' "$SCAN_DIR"
+  printf '  /Library/LaunchDaemons/com.warden.landd.plist (landing daemon)\n'
   printf '  /etc/gitconfig include -> %s/warden.gitconfig\n' "$WD"
   printf 'would render policy scanning: %s\n' "$SCAN_DIR"
   printf 'would write: %s/managed-settings.json and %s/registry.json\n' "$DEST" "$WD"
@@ -74,6 +75,16 @@ sed "s|@SCAN_DIR@|$SCAN_DIR|g" "$SRC/templates/com.warden.refresh.plist" > "$PLI
 chown root:wheel "$PLIST"; chmod 0644 "$PLIST"
 launchctl bootout system/com.warden.refresh 2>/dev/null || true
 launchctl bootstrap system "$PLIST"
+
+# landing daemon: zero-tax `warden land` integrates through per-repo lanes
+install -m 0644 "$SRC/templates/com.warden.landd.plist" \
+  /Library/LaunchDaemons/com.warden.landd.plist
+mkdir -p /tmp/claude/warden-land
+chmod 1777 /tmp/claude /tmp/claude/warden-land 2>/dev/null || true
+launchctl bootout system/com.warden.landd 2>/dev/null || true
+launchctl bootstrap system /Library/LaunchDaemons/com.warden.landd.plist
+launchctl print system/com.warden.landd >/dev/null 2>&1 \
+  || { echo "FATAL: landing daemon not loaded" >&2; exit 1; }
 
 # v1.1 verification: hook executable, include resolvable, daemon loaded
 [ -x "$WD/githooks/reference-transaction" ] || { echo "FATAL: hook not executable" >&2; exit 1; }

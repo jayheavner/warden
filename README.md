@@ -32,6 +32,17 @@ sudo "/Library/Application Support/ClaudeCode/warden/uninstall.sh"   # full roll
 Bash is never judged by parsing command text — the sandbox sees the actual
 filesystem operations.
 
+## Integration lanes
+
+`warden land` resolves each repo's lane — declared (`.warden.json`) >
+learned (the remote's own policy denials; `warden forget <repo>` drops a
+lesson) > inferred (no remote → local ff; remoted → direct push). PR
+ceremony only ever happens when the remote's rules or a committed
+declaration require it; a policy-denied push falls back to
+branch-push + `gh pr create` in the same request and the lesson persists.
+`warden status` shows every repo's resolved lane and why. Design:
+`docs/superpowers/specs/2026-07-16-integration-lanes-design.md`.
+
 ## Audit queries
 
 ```

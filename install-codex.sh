@@ -62,7 +62,7 @@ python3 - "$DEST/requirements.toml" <<'EOF'
 import sys, tomllib
 d = tomllib.loads(open(sys.argv[1]).read())
 assert d["default_permissions"] == "warden"
-assert d["allowed_permission_profiles"] == ["warden"]
+assert d["allowed_permission_profiles"] == {"warden": True}
 assert "danger-full-access" not in d["allowed_sandbox_modes"]
 assert d["hooks"]["managed_dir"] == "/etc/codex/warden"
 assert d["hooks"]["PreToolUse"][0]["hooks"][0]["command"]

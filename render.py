@@ -72,8 +72,10 @@ CODEX_GIT_CARVEOUTS = ["objects/**", "refs/**", "logs/**", "worktrees/**",
                        "packed-refs", "packed-refs.lock", "FETCH_HEAD"]
 
 
-def codex_fs_rules(repos, managed_root):
+def codex_fs_rules(repos, managed_root, disabled=False):
     rules = {managed_root.rstrip("/") + "/**": "deny"}
+    if disabled:
+        return rules
     for r in repos:
         root = r["root"]
         for c in CODEX_GIT_CARVEOUTS:
@@ -92,9 +94,10 @@ def codex_fs_rules(repos, managed_root):
     return rules
 
 
-def render_codex_requirements(base_text, repos, managed_root):
+def render_codex_requirements(base_text, repos, managed_root, disabled=False):
     lines = [base_text.rstrip("\n"), "", "[permissions.warden.filesystem]"]
-    for path, access in sorted(codex_fs_rules(repos, managed_root).items()):
+    for path, access in sorted(
+            codex_fs_rules(repos, managed_root, disabled=disabled).items()):
         lines.append("%s = %s" % (json.dumps(path), json.dumps(access)))
     return "\n".join(lines) + "\n"
 
@@ -138,6 +141,7 @@ def main(argv=None):
     ap.add_argument("--format", choices=["claude", "codex"], default="claude")
     ap.add_argument("--write-gitconfig")
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--disabled", action="store_true")
     a = ap.parse_args(argv)
     if a.managed_root is None:
         a.managed_root = ("/etc/codex" if a.format == "codex"
@@ -151,19 +155,22 @@ def main(argv=None):
     if a.format == "codex":
         import tomllib
         text = render_codex_requirements(open(a.base).read(), repos,
-                                         a.managed_root)
+                                         a.managed_root, disabled=a.disabled)
         tomllib.loads(text)
         if a.check:
             print(text)
             return 0
         _atomic_write_text(a.write_settings, text, tomllib.loads)
         _atomic_write(a.write_registry, registry)
-        rules = codex_fs_rules(repos, a.managed_root)
+        rules = codex_fs_rules(repos, a.managed_root, disabled=a.disabled)
         print("wrote %s (%d repos, %d filesystem rules)" % (
             a.write_settings, len(repos), len(rules)))
         return 0
     base = json.load(open(a.base))
     settings = render_settings(base, repos, a.managed_root)
+    if a.disabled:
+        settings["sandbox"]["enabled"] = False
+        settings["sandbox"]["failIfUnavailable"] = False
     gitconfig = render_gitconfig(repos, a.managed_root)
     if a.check:
         print(json.dumps({"settings": settings, "registry": registry,

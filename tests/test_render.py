@@ -125,6 +125,27 @@ class TestRender(unittest.TestCase):
         self.assertIn("includeIf", open(gc).read())
         self.assertFalse(os.path.exists(gc + ".tmp"))
 
+    def test_disabled_render_flips_sandbox_only(self):
+        def render_check(extra_args=None):
+            p = subprocess.run(["python3", render.__file__, "--scan",
+                                self.parent, "--base", TEMPLATE,
+                                "--write-settings", os.path.join(
+                                    self.tmp.name, "ms.json"),
+                                "--write-registry", os.path.join(
+                                    self.tmp.name, "reg.json"),
+                                "--check"] + (extra_args or []),
+                               capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            return json.loads(p.stdout)["settings"]
+
+        on = render_check()
+        off = render_check(["--disabled"])
+        self.assertFalse(off["sandbox"]["enabled"])
+        self.assertFalse(off["sandbox"]["failIfUnavailable"])
+        off["sandbox"]["enabled"] = on["sandbox"]["enabled"]
+        off["sandbox"]["failIfUnavailable"] = on["sandbox"]["failIfUnavailable"]
+        self.assertEqual(on, off)
+
     def test_hookspath_override_detected(self):
         repos = render.scan_repos([self.parent])
         self.assertFalse(repos[0]["hookspath_override"])

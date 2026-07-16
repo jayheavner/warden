@@ -299,7 +299,7 @@ REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 REMOTE_URL_RE = re.compile(
     r"^(https://[A-Za-z0-9.-]+(:\d+)?/[A-Za-z0-9._~/-]+"
     r"|ssh://([A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+(:\d+)?/[A-Za-z0-9._~/-]+"
-    r"|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[A-Za-z0-9._~/-]+)$")
+    r"|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[A-Za-z0-9._~/-]+)\Z")
 
 
 def process_remote_request(req, registry, demote=True):

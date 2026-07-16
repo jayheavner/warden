@@ -469,6 +469,48 @@ class TestRemoteAdd(unittest.TestCase):
                              "origin"),
                          "https://github.com/jayheavner/other.git")
 
+    def assert_rejected(self, res, needle):
+        self.assertEqual(res["status"], "rejected", res)
+        self.assertIn(needle, res["reason"])
+
+    def test_unknown_repo_rejected(self):
+        self.assert_rejected(self.request(repo="/no/such"), "registry")
+
+    def test_bad_remote_names_rejected(self):
+        for name in ("-evil", "", "a name", "a;b", "../up"):
+            self.assert_rejected(self.request(name=name), "remote name")
+
+    def test_non_transport_urls_rejected(self):
+        for url in ("file:///etc/passwd",
+                    "/Users/jay/claude/other",
+                    "ext::sh -c whoami",
+                    "--upload-pack=/tmp/x",
+                    "https://github.com/a/b.git --upload-pack=/tmp/x",
+                    "https://github.com/a/b.git\nhelper = !sh",
+                    "git://github.com/a/b.git",
+                    "https://github.com/a/b.git\n",
+                    ""):
+            self.assert_rejected(self.request(url=url), "URL")
+
+    def test_ssh_urls_accepted(self):
+        for url in ("git@github.com:jayheavner/warden.git",
+                    "ssh://git@github.com/jayheavner/warden.git"):
+            res = self.request(name="up-" + str(abs(hash(url)) % 100),
+                               url=url)
+            self.assertEqual(res["status"], "remote-added", res)
+
+    def test_only_remote_section_changes(self):
+        cfg = os.path.join(self.repo, ".git", "config")
+        before = open(cfg).read()
+        self.request()
+        added = [l for l in open(cfg).read().splitlines()
+                 if l not in before.splitlines()]
+        for line in added:
+            self.assertRegex(
+                line.strip(),
+                r'^(\[remote "origin"\]|url = |fetch = \+refs/heads/)',
+                "unexpected config line: %r" % line)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,6 +17,44 @@ MANAGED_ROOT_DEFAULT = "/Library/Application Support/ClaudeCode"
 
 Verdict = collections.namedtuple("Verdict", "decision rule reason")
 
+DISABLED_BANNER = ("⚠ Warden enforcement is DISABLED (since %s). Session "
+                   "isolation is off. Re-enable with: sudo warden enable")
+DISABLED_ADDENDUM = ("Bash writes in sessions started before the disable "
+                     "are still sandboxed until those sessions restart.")
+
+
+def sentinel_path(managed_root=MANAGED_ROOT_DEFAULT):
+    return (os.environ.get("WARDEN_SENTINEL")
+            or os.path.join(managed_root, "warden", "DISABLED"))
+
+
+def disabled_since(managed_root=MANAGED_ROOT_DEFAULT):
+    """ISO timestamp if warden is disabled, else None. Any anomaly —
+    directory, unreadable, bad JSON — reads as enabled (fail safe)."""
+    p = sentinel_path(managed_root)
+    try:
+        if not os.path.isfile(p):
+            return None
+        return str(json.load(open(p))["disabled_at"])
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def _notify_once(sid, since):
+    """Emit the disabled banner at most once per session."""
+    d = (os.environ.get("WARDEN_NOTIFY_DIR")
+         or os.path.expanduser("~/.claude/warden/notified"))
+    mark = os.path.join(d, sid or "no-session")
+    try:
+        if os.path.exists(mark):
+            return
+        os.makedirs(d, exist_ok=True)
+        open(mark, "w").write(since + "\n")
+    except OSError:
+        return
+    print(json.dumps({"systemMessage":
+                      DISABLED_BANNER % since + " " + DISABLED_ADDENDUM}))
+
 
 def _resolve(p):
     return os.path.realpath(os.path.expanduser(p))
@@ -127,28 +165,46 @@ def main():
     tool = data.get("tool_name", "")
     tin = data.get("tool_input") or {}
     base = {"session_id": sid, "cwd": cwd, "tool": tool}
+    since = disabled_since()
     try:
         if event == "PreToolUse" and tool in FILE_TOOLS:
             target = tin.get(FILE_TOOLS[tool], "")
-            v = classify(target, cwd) if target else Verdict("none", "", "")
-            _audit(dict(base, target=target, verdict=v.decision or "none",
-                        rule=v.rule))
-            if v.decision == "deny":
-                _deny(event, v.reason)
+            if since:
+                _audit(dict(base, target=target, verdict="disabled-allow",
+                            rule=""))
+                _notify_once(sid, since)
+            else:
+                v = classify(target, cwd) if target else Verdict("none", "", "")
+                _audit(dict(base, target=target, verdict=v.decision or "none",
+                            rule=v.rule))
+                if v.decision == "deny":
+                    _deny(event, v.reason)
         elif event == "PreToolUse" and tool == "Bash":
-            _audit(dict(base, target=(tin.get("command") or "")[:500],
-                        verdict="audit", rule=""))
+            if since:
+                _audit(dict(base, target=(tin.get("command") or "")[:500],
+                            verdict="disabled-audit", rule=""))
+                _notify_once(sid, since)
+            else:
+                _audit(dict(base, target=(tin.get("command") or "")[:500],
+                            verdict="audit", rule=""))
         elif event == "SessionStart":
             scope = worktree_container(_resolve(cwd)) or cwd
-            _audit(dict(base, target=scope, verdict="session-start", rule=""))
-            print(json.dumps({"hookSpecificOutput": {
-                "hookEventName": "SessionStart",
-                "additionalContext":
-                    "warden enforcement is active: writes are limited to your "
-                    "workspace (%s); shared checkouts and other sessions' "
-                    "worktrees are read-only. To integrate finished work, run "
-                    "`warden land <branch>` — a root daemon fast-forwards the "
-                    "shared HEAD branch; never ask the human to merge." % scope}}))
+            if since:
+                _audit(dict(base, target=scope, verdict="session-start-disabled",
+                            rule=""))
+                print(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": DISABLED_BANNER % since}}))
+            else:
+                _audit(dict(base, target=scope, verdict="session-start", rule=""))
+                print(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext":
+                        "warden enforcement is active: writes are limited to your "
+                        "workspace (%s); shared checkouts and other sessions' "
+                        "worktrees are read-only. To integrate finished work, run "
+                        "`warden land <branch>` — a root daemon fast-forwards the "
+                        "shared HEAD branch; never ask the human to merge." % scope}}))
         elif event in ("WorktreeCreate", "WorktreeRemove"):
             _audit(dict(base, target=json.dumps(tin)[:300], verdict=event,
                         rule=""))

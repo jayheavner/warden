@@ -95,5 +95,68 @@ class TestMain(unittest.TestCase):
         self.assertEqual((p.returncode, p.stdout.strip()), (0, ""))
 
 
+class TestDisabled(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.audit = os.path.join(self.tmp.name, "audit.jsonl")
+        self.sentinel = os.path.join(self.tmp.name, "DISABLED")
+        json.dump({"disabled_at": "2026-07-16T10:00:00-04:00", "by_uid": 0},
+                  open(self.sentinel, "w"))
+        self.repo = os.path.join(self.tmp.name, "repo")
+        os.makedirs(os.path.join(self.repo, ".git"))
+        self.wt = os.path.join(self.repo, ".claude", "worktrees", "w1")
+        os.makedirs(self.wt)
+        open(os.path.join(self.wt, ".git"), "w").write("gitdir: x\n")
+        self.notify_dir = os.path.join(self.tmp.name, "notified")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_disabled(self, payload_dict):
+        env = dict(os.environ, WARDEN_AUDIT_FILE=self.audit,
+                   WARDEN_NO_SYSLOG="1", WARDEN_SENTINEL=self.sentinel,
+                   WARDEN_NOTIFY_DIR=self.notify_dir)
+        return subprocess.run(["python3", GUARD],
+                              input=json.dumps(payload_dict),
+                              capture_output=True, text=True, env=env)
+
+    def test_foreign_edit_permitted_with_banner_once(self):
+        p = payload("Edit", {"file_path": os.path.join(self.repo, "a.md")},
+                    self.wt)
+        r1 = self.run_disabled(p)
+        self.assertEqual(r1.returncode, 0)
+        out = json.loads(r1.stdout)
+        self.assertNotIn("hookSpecificOutput", out)      # no deny
+        self.assertIn("Warden enforcement is DISABLED", out["systemMessage"])
+        self.assertIn("still sandboxed until those sessions restart",
+                      out["systemMessage"])
+        rec = [json.loads(l) for l in open(self.audit)][-1]
+        self.assertEqual(rec["verdict"], "disabled-allow")
+        r2 = self.run_disabled(p)                        # banner only once
+        self.assertEqual(r2.stdout.strip(), "")
+
+    def test_session_start_banner(self):
+        r = self.run_disabled(payload("", {}, self.wt, event="SessionStart"))
+        ctx = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("⚠ Warden enforcement is DISABLED (since "
+                      "2026-07-16T10:00:00-04:00)", ctx)
+        self.assertIn("sudo warden enable", ctx)
+
+    def test_sentinel_anomalies_mean_enabled(self):
+        for spoil in ("dir", "badjson"):
+            os.remove(self.sentinel) if os.path.isfile(self.sentinel) else None
+            if spoil == "dir":
+                os.mkdir(self.sentinel)
+            else:
+                os.rmdir(self.sentinel)
+                open(self.sentinel, "w").write("not json")
+            r = self.run_disabled(payload(
+                "Edit", {"file_path": os.path.join(self.repo, "a.md")},
+                self.wt))
+            hso = json.loads(r.stdout)["hookSpecificOutput"]
+            self.assertEqual(hso["permissionDecision"], "deny",
+                             "anomaly %s must fail safe" % spoil)
+
+
 if __name__ == "__main__":
     unittest.main()

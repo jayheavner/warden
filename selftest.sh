@@ -200,6 +200,23 @@ else
   fail "T13 hook delivery chain present" "include:$INC_OK rendered:$([ -f "$WD/warden.gitconfig" ] && echo 1 || echo 0)"
 fi
 
+# T14: every git a session might invoke is governed (>=2.28 + warden include)
+UNGOV=0; NGITS=0
+for g in /usr/bin/git /usr/local/bin/git /opt/homebrew/bin/git /opt/local/bin/git; do
+  [ -x "$g" ] || continue
+  NGITS=$((NGITS+1))
+  ver="$("$g" --version 2>/dev/null | awk '{print $3}')"
+  ok="$(printf '%s' "$ver" | awk -F. '{print ($1>2 || ($1==2 && $2>=28)) ? 1 : 0}')"
+  if [ "$ok" != 1 ]; then
+    fail "T14 git $g governed" "version $ver <2.28 — hook never runs"
+    UNGOV=1
+  elif ! "$g" config --system --get-all include.path 2>/dev/null | grep -qxF "$WD/warden.gitconfig"; then
+    fail "T14 git $g governed" "warden include absent from its system config"
+    UNGOV=1
+  fi
+done
+[ "$UNGOV" = 0 ] && pass "T14 all $NGITS git binaries governed"
+
 echo
 echo "== result: $PASSN pass, $FAILN fail, $SKIPN skip"
 echo "== manual check remaining: ask this session to retry a blocked write with the"

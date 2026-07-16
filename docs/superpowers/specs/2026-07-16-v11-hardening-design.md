@@ -181,6 +181,13 @@ local config already sets `core.hooksPath`.
 - registry age (`generated_at` vs now) and repo/deny counts.
 - hook delivery: whether `/etc/gitconfig` carries the warden include and
   `warden.gitconfig` exists.
+- multi-git governance probe (added post-panel, 2026-07-16): for each git
+  binary at the known install prefixes (`/usr/bin`, `/usr/local/bin`,
+  `/opt/homebrew/bin`, `/opt/local/bin`), report GOVERNED / NOT GOVERNED /
+  TOO OLD by checking its version and whether the warden include resolves
+  in *that binary's* system-config chain — a Homebrew git reads its own
+  prefix's etc/gitconfig, so this converts silent bypass-by-new-git into
+  visible drift. Selftest T14 fails loudly on any ungoverned git.
 
 ## 5. Renderer changes
 

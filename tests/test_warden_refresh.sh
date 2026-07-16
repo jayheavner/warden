@@ -36,5 +36,35 @@ echo "$out" | grep -q "refresh: ok" && pass "status shows refresh health" || fai
 echo "$out" | grep -q "registry:" && pass "status shows registry age" || fail "status shows registry age"
 echo "$out" | grep -q "hook delivery:" && pass "status shows hook delivery" || fail "status shows hook delivery"
 
+# 5: multi-git governance probe — governed, ungoverned, and too-old gits
+mkdir -p "$T/fakegits"
+cat > "$T/fakegits/governed-git" <<FAKE
+#!/bin/bash
+case "\$1" in
+  --version) echo "git version 2.50.1";;
+  config) echo "$WD/warden.gitconfig";;
+esac
+FAKE
+cat > "$T/fakegits/ungoverned-git" <<'FAKE'
+#!/bin/bash
+case "$1" in
+  --version) echo "git version 2.45.0";;
+  config) exit 1;;
+esac
+FAKE
+cat > "$T/fakegits/old-git" <<'FAKE'
+#!/bin/bash
+case "$1" in
+  --version) echo "git version 2.22.0";;
+  config) exit 1;;
+esac
+FAKE
+chmod +x "$T/fakegits/"*
+out="$(WARDEN_GIT_CANDIDATES="$T/fakegits/governed-git:$T/fakegits/ungoverned-git:$T/fakegits/old-git:$T/fakegits/missing-git" bash "$SRC/bin/warden" status)"
+echo "$out" | grep -q "governed-git 2.50.1 GOVERNED" && pass "governed git detected" || fail "governed git detected" "$out"
+echo "$out" | grep -q "ungoverned-git 2.45.0 NOT GOVERNED" && pass "ungoverned git flagged" || fail "ungoverned git flagged"
+echo "$out" | grep -q "old-git 2.22.0 TOO OLD" && pass "old git flagged" || fail "old git flagged"
+echo "$out" | grep -q "missing-git" && fail "missing git skipped" "listed nonexistent" || pass "missing git skipped"
+
 echo "== $PASSN pass, $FAILN fail"
 [ "$FAILN" -eq 0 ]

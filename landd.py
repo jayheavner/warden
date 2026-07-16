@@ -14,6 +14,7 @@ import datetime
 import json
 import os
 import pwd
+import re
 import subprocess
 import sys
 import time
@@ -289,6 +290,41 @@ def process_request(req, registry, demote=True,
     out.setdefault("lane", res["lane"])
     out["provenance"] = res["provenance"]
     return out
+
+
+REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# https or ssh git URLs only: no file://, ext::, local paths, options, or
+# whitespace — the daemon writes remote.<name>.url into a root-protected
+# .git/config, so anything a git transport could execute is rejected.
+REMOTE_URL_RE = re.compile(
+    r"^(https://[A-Za-z0-9.-]+(:\d+)?/[A-Za-z0-9._~/-]+"
+    r"|ssh://([A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+(:\d+)?/[A-Za-z0-9._~/-]+"
+    r"|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[A-Za-z0-9._~/-]+)$")
+
+
+def process_remote_request(req, registry, demote=True):
+    """Mediated `git remote add`: sessions can't write the shared checkout's
+    .git/config (denyWrite blocks hook/credential-helper injection), so this
+    daemon applies remote.<name>.url — and nothing else — after validating
+    the repo is adopted, the name is a plain remote name, and the URL is a
+    plausible https/ssh git URL."""
+    repo = os.path.realpath(str(req.get("repo", "")))
+    name = str(req.get("name", ""))
+    url = str(req.get("url", ""))
+    roots = {r["root"] for r in registry.get("repos", [])}
+    if repo not in roots:
+        return {"status": "rejected",
+                "reason": "%s is not an adopted repo in the registry" % repo}
+    if not REMOTE_NAME_RE.match(name):
+        return {"status": "rejected", "reason": "invalid remote name"}
+    if not REMOTE_URL_RE.match(url):
+        return {"status": "rejected",
+                "reason": "invalid remote URL (https:// or ssh git URLs only)"}
+    rc, _, err = _git(repo, "remote", "add", name, url, demote=demote)
+    if rc != 0:
+        return {"status": "rejected",
+                "reason": "git remote add failed (%s)" % err[:200]}
+    return {"status": "remote-added", "name": name, "url": url}
 
 
 def load_registry():

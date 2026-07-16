@@ -428,5 +428,32 @@ class TestQueueHygiene(unittest.TestCase):
                          out("git", "-C", bare, "rev-parse", "main"))
 
 
+class TestRemoteAdd(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = os.path.realpath(os.path.join(self.tmp.name, "alpha"))
+        sh("git", "init", "-q", "-b", "main", self.repo)
+        sh("git", "-C", self.repo, "-c", "user.email=t@t",
+           "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init")
+        self.registry = {"repos": [{"root": self.repo,
+                                    "head_branch": "main"}]}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def request(self, **kw):
+        req = {"op": "remote-add", "repo": self.repo, "name": "origin",
+               "url": "https://github.com/jayheavner/warden.git"}
+        req.update(kw)
+        return landd.process_remote_request(req, self.registry, demote=False)
+
+    def test_add_creates_remote(self):
+        res = self.request()
+        self.assertEqual(res["status"], "remote-added", res)
+        self.assertEqual(out("git", "-C", self.repo, "remote", "get-url",
+                             "origin"),
+                         "https://github.com/jayheavner/warden.git")
+
+
 if __name__ == "__main__":
     unittest.main()

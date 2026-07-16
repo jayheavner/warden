@@ -9,11 +9,13 @@ pass() { echo "PASS $1"; PASSN=$((PASSN+1)); }
 fail() { echo "FAIL $1 ${2:-}"; FAILN=$((FAILN+1)); }
 export WARDEN_DEST="$T/dest"; WD="$WARDEN_DEST/warden"
 mkdir -p "$WD"
-cp "$SRC/render.py" "$WD/"
+cp "$SRC/render.py" "$SRC/userfallback.py" "$WD/"
 cp "$SRC/templates/managed-settings.base.json" "$WD/managed-settings.base.json"
 mkdir -p "$T/scan/repo1" && git -C "$T/scan/repo1" init -q \
   && git -C "$T/scan/repo1" -c user.email=t@t -c user.name=t commit -q --allow-empty -m i
 export WARDEN_SCAN_DIR="$T/scan"
+export WARDEN_USER_SETTINGS="$T/user-settings.json"
+export WARDEN_FALLBACK_STATE="$T/fallback-state/fallback.json"
 
 # 1: refresh succeeds, writes all four surfaces + ok health
 bash "$SRC/bin/warden" refresh >/dev/null 2>&1
@@ -21,6 +23,27 @@ bash "$SRC/bin/warden" refresh >/dev/null 2>&1
   && [ -f "$WD/warden.gitconfig" ]; } && pass "refresh writes surfaces" || fail "refresh writes surfaces"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["ok"] and d["repos"]==1' \
   "$WD/last-refresh.json" 2>/dev/null && pass "health ok" || fail "health ok"
+# 1b: refresh delivers the user-settings fallback (Enterprise-override stopgap)
+python3 -c '
+import json, sys
+u = json.load(open(sys.argv[1]))
+assert u["env"]["WARDEN_ACTIVE"] == "1"
+assert any("warden/guard.py" in h.get("command", "")
+           for ev in u["hooks"].values() for g in ev for h in g["hooks"])
+assert u["sandbox"]["enabled"] is True
+assert sys.argv[1] in u["sandbox"]["filesystem"]["denyWrite"]' \
+  "$WARDEN_USER_SETTINGS" 2>/dev/null \
+  && pass "refresh delivers user-settings fallback" \
+  || fail "refresh delivers user-settings fallback"
+# 1c: fallback refuses corrupt user settings and fails the refresh loudly
+cp "$WARDEN_USER_SETTINGS" "$T/user-settings.good"
+echo '{corrupt' > "$WARDEN_USER_SETTINGS"
+bash "$SRC/bin/warden" refresh >/dev/null 2>&1 \
+  && fail "corrupt user settings fails refresh" || pass "corrupt user settings fails refresh"
+[ "$(cat "$WARDEN_USER_SETTINGS")" = '{corrupt' ] \
+  && pass "corrupt user settings untouched" || fail "corrupt user settings untouched"
+cp "$T/user-settings.good" "$WARDEN_USER_SETTINGS"
+bash "$SRC/bin/warden" refresh >/dev/null 2>&1
 # 2: failed refresh writes ok:false and exits nonzero
 WARDEN_BASE_OVERRIDE="$T/nope.json" bash "$SRC/bin/warden" refresh >/dev/null 2>&1 \
   && fail "failed refresh exits nonzero" || pass "failed refresh exits nonzero"

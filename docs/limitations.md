@@ -18,6 +18,14 @@ job, not a bug. The full derivation lives in
   its policy when it starts. After installing Warden — or after adding or
   restructuring repos — restart any running sessions so they pick up the
   current policy.
+- **Claude Enterprise remote policy owns the managed-settings layer.** On a
+  machine signed into a Claude Enterprise org, Claude Code replaces the local
+  `managed-settings.json` layer with the org's remote policy — discarding
+  Warden's env, hooks, and sandbox. Warden therefore also delivers through the
+  user-settings layer (which survives the override), `warden status` reports
+  the delivery and governed-session evidence, and `warden verify-claude`
+  proves enforcement live. The tamper-proof fix is org-side; see
+  [enterprise-override.md](enterprise-override.md).
 
 ## Narrow edges within scope
 

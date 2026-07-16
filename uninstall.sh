@@ -20,6 +20,16 @@ if [ -f "$WD/gitconfig-include.sh" ]; then
   . "$WD/gitconfig-include.sh"
   warden_include_remove /etc/gitconfig "$WD/warden.gitconfig"
 fi
+# user-settings fallback out (restores the pre-warden shape via state file)
+FB_HOME="${SUDO_USER:+/Users/$SUDO_USER}"; FB_HOME="${FB_HOME:-$HOME}"
+if [ -f "$WD/userfallback.py" ] && [ -f "$FB_HOME/.claude/settings.json" ]; then
+  python3 "$WD/userfallback.py" \
+    --managed-settings "$DEST/managed-settings.json" \
+    --user-settings "$FB_HOME/.claude/settings.json" \
+    --state "$FB_HOME/.claude/warden/fallback.json" --remove || true
+  [ -n "${SUDO_USER:-}" ] && chown "$SUDO_USER" "$FB_HOME/.claude/settings.json" || true
+fi
+
 rm -f "$DEST/managed-settings.json" /usr/local/bin/warden
 rm -rf "$DEST/warden"
 rmdir "$DEST" 2>/dev/null || true

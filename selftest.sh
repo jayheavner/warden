@@ -14,7 +14,12 @@ skip() { say SKIP "$1" "${2:-}"; SKIPN=$((SKIPN+1)); }
 
 if [ "${WARDEN_ACTIVE:-}" != "1" ]; then
   echo "warden selftest: WARDEN_ACTIVE is not set — enforcement is not active in this session."
-  echo "Install with: sudo ./install.sh, then start a FRESH session and re-run."
+  echo "Either this session predates the install, or Claude Code never loaded warden's"
+  echo "settings. On Claude Enterprise accounts the org's remote policy REPLACES the"
+  echo "local managed-settings layer — the file on disk is then dead. Check delivery:"
+  echo "  warden status          (claude fallback + governed-session evidence)"
+  echo "  warden verify-claude   (live end-to-end proof, run from a plain shell)"
+  echo "Then start a FRESH session and re-run."
   exit 3
 fi
 [ -r "$REG" ] || { echo "warden selftest: no registry at $REG"; exit 3; }
@@ -216,6 +221,24 @@ for g in /usr/bin/git /usr/local/bin/git /opt/homebrew/bin/git /opt/local/bin/gi
   fi
 done
 [ "$UNGOV" = 0 ] && pass "T14 all $NGITS git binaries governed"
+
+# T16: user-settings fallback delivered (survives the Enterprise remote-policy
+# override that discards the managed-settings layer)
+US="${WARDEN_USER_SETTINGS:-$HOME/.claude/settings.json}"
+if python3 - "$US" <<'EOF' 2>/dev/null
+import json, sys
+u = json.load(open(sys.argv[1]))
+assert u.get("env", {}).get("WARDEN_ACTIVE") == "1"
+assert any("warden/guard.py" in h.get("command", "")
+           for ev in u.get("hooks", {}).values()
+           for g in ev for h in g.get("hooks", []))
+assert u["sandbox"]["filesystem"]["denyWrite"]
+EOF
+then
+  pass "T16 user-settings fallback delivered"
+else
+  fail "T16 user-settings fallback delivered" "run: sudo warden refresh (Enterprise override would leave claude ungoverned)"
+fi
 
 # T15: every adopted repo resolves to an integration lane with provenance
 if warden status 2>/dev/null | grep -q "lane "; then

@@ -11,7 +11,7 @@ WD="$DEST/warden"
 SCAN_HOME="${SUDO_USER:+/Users/$SUDO_USER}"
 SCAN_HOME="${SCAN_HOME:-$HOME}"
 SCAN_DIR="${WARDEN_SCAN_DIR:-$SCAN_HOME/claude}"
-FILES=(guard.py render.py landd.py lanes.py selftest.sh uninstall.sh gitconfig-include.sh templates/managed-settings.base.json templates/hookpath.gitconfig)
+FILES=(guard.py render.py landd.py lanes.py userfallback.py selftest.sh uninstall.sh gitconfig-include.sh templates/managed-settings.base.json templates/hookpath.gitconfig)
 
 if [ "${1:-}" = "--print-plan" ]; then
   printf 'would install to %s:\n' "$WD"
@@ -23,6 +23,7 @@ if [ "${1:-}" = "--print-plan" ]; then
   printf '  /etc/gitconfig include -> %s/warden.gitconfig\n' "$WD"
   printf 'would render policy scanning: %s\n' "$SCAN_DIR"
   printf 'would write: %s/managed-settings.json and %s/registry.json\n' "$DEST" "$WD"
+  printf 'would merge user-settings fallback (Enterprise-override stopgap) into ~/.claude/settings.json\n'
   exit 0
 fi
 
@@ -78,6 +79,23 @@ print("policy verified: sandbox fail-closed, hooks wired,",
       len(d["sandbox"]["filesystem"]["denyWrite"]), "denyWrite entries")
 EOF
 
+# Enterprise-override stopgap: on Claude Enterprise accounts the remote org
+# policy replaces the policySettings layer, silently discarding the file we
+# just rendered. Deliver the same enforcement through the user-settings
+# layer, which survives that override (proven per-layer; see docs).
+FB_HOME="${SUDO_USER:+/Users/$SUDO_USER}"; FB_HOME="${FB_HOME:-$HOME}"
+python3 "$WD/userfallback.py" \
+  --managed-settings "$DEST/managed-settings.json" \
+  --user-settings "$FB_HOME/.claude/settings.json" \
+  --state "$FB_HOME/.claude/warden/fallback.json"
+if [ -n "${SUDO_USER:-}" ]; then
+  for f in "$FB_HOME/.claude/settings.json" \
+           "$FB_HOME/.claude/warden/fallback.json" \
+           "$FB_HOME/.claude/warden/settings.json.pre-warden"; do
+    [ -f "$f" ] && chown "$SUDO_USER" "$f" || true
+  done
+fi
+
 # v1.1: LaunchDaemon
 PLIST=/Library/LaunchDaemons/com.warden.refresh.plist
 sed "s|@SCAN_DIR@|$SCAN_DIR|g" "$SRC/templates/com.warden.refresh.plist" > "$PLIST"
@@ -105,6 +123,9 @@ echo "v1.1: hook + includeIf delivery + refresh daemon verified"
 
 echo
 echo "warden installed."
-echo "next: 1) restart running clones (sessions bind at start)"
-echo "      2) in a fresh worktree session, run: warden selftest"
-echo "      3) after cloning new repos or changing repo layouts: sudo warden refresh"
+echo "next: 1) REQUIRED — prove live enforcement end-to-end: warden verify-claude"
+echo "         (catches the Claude Enterprise remote-policy override; a file on"
+echo "         disk is not enforcement)"
+echo "      2) restart running clones (sessions bind at start)"
+echo "      3) in a fresh worktree session, run: warden selftest"
+echo "      4) after cloning new repos or changing repo layouts: sudo warden refresh"

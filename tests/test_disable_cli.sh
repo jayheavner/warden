@@ -9,11 +9,13 @@ pass() { echo "PASS $1"; PASSN=$((PASSN+1)); }
 fail() { echo "FAIL $1 ${2:-}"; FAILN=$((FAILN+1)); }
 export WARDEN_DEST="$T/dest"; WD="$WARDEN_DEST/warden"
 mkdir -p "$WD"
-cp "$SRC/render.py" "$WD/"
+cp "$SRC/render.py" "$SRC/userfallback.py" "$WD/"
 cp "$SRC/templates/managed-settings.base.json" "$WD/managed-settings.base.json"
 mkdir -p "$T/scan/repo1" && git -C "$T/scan/repo1" init -q \
   && git -C "$T/scan/repo1" -c user.email=t@t -c user.name=t commit -q --allow-empty -m i
 export WARDEN_SCAN_DIR="$T/scan"
+export WARDEN_USER_SETTINGS="$T/user-settings.json"
+export WARDEN_FALLBACK_STATE="$T/fallback-state/fallback.json"
 export WARDEN_AUDIT_FILE="$T/audit.jsonl"
 export WARDEN_CODEX_DEST="$T/no-codex-here"  # keep this test off the real /etc/codex install
 
@@ -30,6 +32,8 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["sandbox"]
   "$WARDEN_DEST/managed-settings.json" 2>/dev/null && pass "sandbox disabled" || fail "sandbox disabled"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["hooks"]["PreToolUse"]' \
   "$WARDEN_DEST/managed-settings.json" 2>/dev/null && pass "hooks kept" || fail "hooks kept"
+python3 -c 'import json,sys; u=json.load(open(sys.argv[1])); assert u["sandbox"]["enabled"] is False and u["env"]["WARDEN_ACTIVE"]=="1"' \
+  "$WARDEN_USER_SETTINGS" 2>/dev/null && pass "fallback disabled render" || fail "fallback disabled render"
 echo "$out" | grep -q "warden is DISABLED" && pass "disable banner text" || fail "disable banner text" "$out"
 echo "$out" | grep -q "stay sandboxed until those sessions restart" && pass "disable stale-session note" || fail "disable stale-session note" "$out"
 
@@ -50,6 +54,8 @@ out="$(bash "$SRC/bin/warden" enable)"; rc=$?
 [ ! -f "$WD/DISABLED" ] && pass "sentinel gone" || fail "sentinel gone"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["sandbox"]["enabled"] is True and d["sandbox"]["failIfUnavailable"] is True' \
   "$WARDEN_DEST/managed-settings.json" 2>/dev/null && pass "sandbox re-enabled" || fail "sandbox re-enabled"
+python3 -c 'import json,sys; u=json.load(open(sys.argv[1])); assert u["sandbox"]["enabled"] is True' \
+  "$WARDEN_USER_SETTINGS" 2>/dev/null && pass "fallback re-enabled" || fail "fallback re-enabled"
 echo "$out" | grep -q "unenforced until restart" && pass "enable stale-session note" || fail "enable stale-session note" "$out"
 
 # 5: enable again is idempotent

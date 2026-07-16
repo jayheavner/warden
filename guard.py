@@ -82,3 +82,85 @@ def classify(target, session_cwd, managed_root=MANAGED_ROOT_DEFAULT):
         "warden I2: %s is inside the shared checkout %s, which is read-only "
         "to every session. Do this work inside your own worktree (the app "
         "creates one per session)." % (t, repo_t))
+
+
+FILE_TOOLS = {"Edit": "file_path", "Write": "file_path",
+              "NotebookEdit": "notebook_path"}
+
+
+def _audit(record):
+    record["ts"] = datetime.datetime.now().astimezone().isoformat()
+    line = json.dumps(record, ensure_ascii=False)
+    path = (os.environ.get("WARDEN_AUDIT_FILE")
+            or os.path.expanduser("~/.claude/warden/audit.jsonl"))
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+    if not os.environ.get("WARDEN_NO_SYSLOG"):
+        try:
+            subprocess.run(["logger", "-t", "warden", line[:900]],
+                           timeout=5, check=False)
+        except Exception:
+            pass
+
+
+def _deny(event, reason):
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": event,
+        "permissionDecision": "deny",
+        "permissionDecisionReason": reason}}))
+
+
+def main():
+    try:
+        data = json.load(sys.stdin)
+    except Exception:
+        _audit({"verdict": "guard-error", "rule": "bad-stdin",
+                "session_id": "", "cwd": "", "tool": "", "target": ""})
+        return 0
+    event = data.get("hook_event_name", "")
+    sid = data.get("session_id", "")
+    cwd = data.get("cwd", "") or os.getcwd()
+    tool = data.get("tool_name", "")
+    tin = data.get("tool_input") or {}
+    base = {"session_id": sid, "cwd": cwd, "tool": tool}
+    try:
+        if event == "PreToolUse" and tool in FILE_TOOLS:
+            target = tin.get(FILE_TOOLS[tool], "")
+            v = classify(target, cwd) if target else Verdict("none", "", "")
+            _audit(dict(base, target=target, verdict=v.decision or "none",
+                        rule=v.rule))
+            if v.decision == "deny":
+                _deny(event, v.reason)
+        elif event == "PreToolUse" and tool == "Bash":
+            _audit(dict(base, target=(tin.get("command") or "")[:500],
+                        verdict="audit", rule=""))
+        elif event == "SessionStart":
+            scope = worktree_container(_resolve(cwd)) or cwd
+            _audit(dict(base, target=scope, verdict="session-start", rule=""))
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext":
+                    "warden enforcement is active: writes are limited to your "
+                    "workspace (%s); shared checkouts and other sessions' "
+                    "worktrees are read-only." % scope}}))
+        elif event in ("WorktreeCreate", "WorktreeRemove"):
+            _audit(dict(base, target=json.dumps(tin)[:300], verdict=event,
+                        rule=""))
+            flag = os.path.expanduser("~/.claude/warden/refresh-requested")
+            os.makedirs(os.path.dirname(flag), exist_ok=True)
+            with open(flag, "w") as f:
+                f.write(sid + "\n")
+        else:
+            _audit(dict(base, target="", verdict="ignored-event", rule=event))
+    except Exception as exc:  # fail open; the sandbox remains the wall
+        _audit(dict(base, target="", verdict="guard-error",
+                    rule=repr(exc)[:200]))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

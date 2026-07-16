@@ -224,6 +224,43 @@ else
   fail "T15 lanes resolved for adopted repos" "warden status shows no lane lines"
 fi
 
+# Disabled-state checks (failsafe): only meaningful while the sentinel is
+# present; this selftest runs unprivileged so it cannot flip the sentinel
+# itself. The full disable->assert->enable->assert cycle lives in
+# tests/test_disable_cli.sh.
+if [ -e "$WD/DISABLED" ]; then
+  DIS_OK=1
+
+  # (a) a write into a foreign worktree path must be permitted by the guard
+  FOREIGN="${SIB:-$REPO}/warden-selftest-disabled-$$.txt"
+  GUARD_OUT=$(python3 -c 'import json,sys;print(json.dumps({
+    "hook_event_name": "PreToolUse", "session_id": "selftest",
+    "cwd": sys.argv[1], "tool_name": "Edit",
+    "tool_input": {"file_path": sys.argv[2]}}))' "$CWD" "$FOREIGN" \
+    | WARDEN_NO_SYSLOG=1 python3 "$WD/guard.py" 2>/dev/null)
+  if echo "$GUARD_OUT" | grep -q '"permissionDecision": "deny"'; then
+    DIS_OK=0
+    fail "disabled-state: foreign-worktree write permitted" "guard still denied: $GUARD_OUT"
+  else
+    pass "disabled-state: foreign-worktree write permitted"
+  fi
+
+  # (b) warden status must exit 2 with the DISABLED first line
+  STATUS_OUT=$(warden status 2>/dev/null)
+  STATUS_RC=$?
+  FIRST_LINE=$(printf '%s\n' "$STATUS_OUT" | head -1)
+  if [ "$STATUS_RC" -eq 2 ] && printf '%s' "$FIRST_LINE" | grep -qE '^state: DISABLED'; then
+    pass "disabled-state: warden status exit 2 + DISABLED first line"
+  else
+    DIS_OK=0
+    fail "disabled-state: warden status exit 2 + DISABLED first line" "rc=$STATUS_RC first=$FIRST_LINE"
+  fi
+
+  [ "$DIS_OK" -eq 1 ] && echo "disabled-state checks PASS"
+else
+  echo "disabled-state: skipped (warden is enabled — run 'sudo warden disable' first to exercise the failsafe)"
+fi
+
 echo
 echo "== result: $PASSN pass, $FAILN fail, $SKIPN skip"
 echo "== manual check remaining: ask this session to retry a blocked write with the"

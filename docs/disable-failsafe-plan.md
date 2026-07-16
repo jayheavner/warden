@@ -267,7 +267,9 @@ fi
 - [ ] **Step 4: Run** — `bash tests/test_hook.sh` → all cases PASS.
 - [ ] **Step 5: Commit** — `git commit -am "feat(githook): sentinel check, one-line notice when disabled"`
 
----### Task 4: `warden disable` / `warden enable` / status integration in `bin/warden`
+---
+
+### Task 4: `warden disable` / `warden enable` / status integration in `bin/warden`
 
 **Files:**
 - Modify: `bin/warden` (two new subcommand cases, status header, usage line)

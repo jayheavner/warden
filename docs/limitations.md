@@ -36,6 +36,16 @@ job, not a bug. The full derivation lives in
   rather than blocked. The git-shaped version of that is closed by the ref
   hook above.
 
+- **Mixed fleets during a disable/enable flip.** `sudo warden disable` and
+  `sudo warden enable` take effect live for the tool guard, the Codex guard,
+  and the git reference-transaction hook, but the Bash sandbox is bound at
+  session start and can't be changed under a running session. In both
+  directions, a session keeps the policy it started with: a session already
+  running when you disable stays sandboxed until it restarts, and a session
+  started while disabled stays unsandboxed after you re-enable, until it
+  restarts. See [the disable failsafe](disable-failsafe.md) for the full
+  design.
+
 - **Freshly cloned repos.** A repo cloned since the last policy refresh isn't
   protected against a root-directory session until the next refresh. A
   background daemon watches for new repos and refreshes within seconds (with a

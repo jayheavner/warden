@@ -81,6 +81,21 @@ class TestRenderCodex(unittest.TestCase):
         self.assertEqual(len(_json.load(open(reg))["repos"]), 1)
         self.assertFalse(os.path.exists(req + ".tmp"))
 
+    def test_disabled_codex_keeps_only_managed_root_rule(self):
+        req = os.path.join(self.tmp.name, "requirements.toml")
+        reg = os.path.join(self.tmp.name, "reg.json")
+        p = subprocess.run(["python3", render.__file__, "--format", "codex",
+                            "--scan", self.parent, "--base", BASE,
+                            "--write-settings", req, "--write-registry", reg,
+                            "--managed-root", "/etc/codex",
+                            "--check", "--disabled"],
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        rules = tomllib.loads(p.stdout)["permissions"]["warden"]["filesystem"]
+        self.assertEqual(list(rules.values()), ["deny"])
+        (path,) = rules.keys()
+        self.assertTrue(path.endswith("/**"))
+
     def test_cli_codex_check_writes_nothing(self):
         req = os.path.join(self.tmp.name, "requirements.toml")
         reg = os.path.join(self.tmp.name, "reg.json")

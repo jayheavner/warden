@@ -24,7 +24,108 @@ os.replace(tmp, path)
 PY
 }
 
+audit_event() {  # audit_event <disable|enable>
+  AUD="${WARDEN_AUDIT_FILE:-/Users/${SUDO_USER:-$USER}/.claude/warden/audit.jsonl}"
+  python3 - "$AUD" "$1" <<'PY' || true
+import datetime, json, os, sys
+rec = {"ts": datetime.datetime.now().astimezone().isoformat(),
+       "event": sys.argv[2], "by_uid": os.getuid(),
+       "tool": "warden-cli", "verdict": sys.argv[2]}
+os.makedirs(os.path.dirname(sys.argv[1]), exist_ok=True)
+open(sys.argv[1], "a").write(json.dumps(rec) + "\n")
+PY
+}
+
 case "${1:-status}" in
+  disable)
+    if [ -z "${WARDEN_DEST:-}" ] && [ "$(id -u)" -ne 0 ]; then
+      echo "run: sudo warden disable" >&2; exit 1
+    fi
+    S="$WD/DISABLED"
+    if [ -f "$S" ]; then
+      echo "warden: already DISABLED (since $(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["disabled_at"])' "$S" 2>/dev/null || echo '?'))"
+      exit 0
+    fi
+    # 1) sentinel (atomic: tmp + rename)
+    python3 - "$S" <<'PY'
+import datetime, json, os, sys
+tmp = sys.argv[1] + ".tmp"
+json.dump({"disabled_at": datetime.datetime.now().astimezone().isoformat(),
+           "by_uid": int(os.environ.get("SUDO_UID") or os.getuid())},
+          open(tmp, "w"))
+os.replace(tmp, sys.argv[1])
+PY
+    [ "$(id -u)" -eq 0 ] && { chown root:wheel "$S"; chmod 0644 "$S"; }
+    rollback() {
+      rm -f "$S"
+      "$0" refresh >/dev/null 2>&1 || true
+      echo "warden disable: FAILED — rolled back, enforcement still ON" >&2
+      exit 1
+    }
+    # 2) disabled renders (claude; codex if installed)
+    SCAN_HOME="${SUDO_USER:+/Users/$SUDO_USER}"; SCAN_HOME="${SCAN_HOME:-$HOME}"
+    python3 "$WD/render.py" --disabled \
+      --scan "${WARDEN_SCAN_DIR:-$SCAN_HOME/claude}" \
+      --base "${WARDEN_BASE_OVERRIDE:-$WD/managed-settings.base.json}" \
+      --write-settings "$DEST/managed-settings.json" \
+      --write-registry "$WD/registry.json" \
+      --write-gitconfig "$WD/warden.gitconfig" || rollback
+    CWD_CODEX="${WARDEN_CODEX_DEST:-/etc/codex}/warden"
+    if [ -d "$CWD_CODEX" ]; then
+      python3 "$CWD_CODEX/render.py" --format codex --disabled \
+        --scan "${WARDEN_SCAN_DIR:-$SCAN_HOME/claude}" \
+        --base "$CWD_CODEX/requirements.base.toml" \
+        --write-settings "${WARDEN_CODEX_DEST:-/etc/codex}/requirements.toml" \
+        --write-registry "$CWD_CODEX/registry.json" || rollback
+    fi
+    # 3) refresh daemon out (landd stays — it is a service, not enforcement)
+    if [ -z "${WARDEN_DEST:-}" ]; then
+      launchctl bootout "system/$DAEMON_LABEL" 2>/dev/null || true
+    fi
+    audit_event disable
+    echo "sentinel: $S"
+    echo "settings: sandbox off, hooks kept (banner active)"
+    [ -d "$CWD_CODEX" ] && echo "codex: requirements.toml disabled render"
+    echo "daemon: $DAEMON_LABEL booted out (com.warden.landd untouched)"
+    echo "note: for stale-policy denials, 'sudo warden refresh' is the lighter fix."
+    echo "warden is DISABLED. Bash writes in already-running sessions stay sandboxed until those sessions restart."
+    ;;
+  enable)
+    if [ -z "${WARDEN_DEST:-}" ] && [ "$(id -u)" -ne 0 ]; then
+      echo "run: sudo warden enable" >&2; exit 1
+    fi
+    S="$WD/DISABLED"
+    if [ ! -f "$S" ]; then echo "warden: already enabled"; exit 0; fi
+    SINCE="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["disabled_at"])' "$S" 2>/dev/null || echo '?')"
+    rm -f "$S"
+    reinstate() {
+      python3 - "$S" <<'PY'
+import datetime, json, os, sys
+json.dump({"disabled_at": datetime.datetime.now().astimezone().isoformat(),
+           "by_uid": int(os.environ.get("SUDO_UID") or os.getuid()),
+           "note": "enable failed; re-disabled"}, open(sys.argv[1], "w"))
+PY
+      echo "warden enable: FAILED — state remains DISABLED" >&2
+      exit 1
+    }
+    "$0" refresh || reinstate          # always a FRESH render, never stale
+    python3 - "$DEST/managed-settings.json" <<'PY' || reinstate
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["sandbox"]["enabled"] and d["sandbox"]["failIfUnavailable"]
+assert d["sandbox"]["allowUnsandboxedCommands"] is False
+assert d["hooks"]["PreToolUse"]
+print("policy verified: sandbox fail-closed, hooks wired,",
+      len(d["sandbox"]["filesystem"]["denyWrite"]), "denyWrite entries")
+PY
+    if [ -z "${WARDEN_DEST:-}" ]; then
+      launchctl bootstrap system /Library/LaunchDaemons/com.warden.refresh.plist 2>/dev/null || true
+      launchctl print "system/$DAEMON_LABEL" >/dev/null 2>&1 || reinstate
+    fi
+    audit_event enable
+    echo "warden is ENABLED (was disabled since $SINCE)."
+    echo "note: sessions started while disabled stay unenforced until restarted."
+    ;;
   refresh)
     if [ -z "${WARDEN_DEST:-}" ] && [ "$(id -u)" -ne 0 ]; then
       echo "run: sudo warden refresh" >&2; exit 1
@@ -187,6 +288,12 @@ EOF
     if [ ! -f "$DEST/managed-settings.json" ]; then
       echo "warden: not installed"; exit 0
     fi
+    STATUS_RC=0
+    if [ -f "$WD/DISABLED" ]; then
+      STATUS_RC=2
+      echo "state: DISABLED since $(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["disabled_at"])' "$WD/DISABLED" 2>/dev/null || echo '?') (sudo warden enable to re-arm)"
+      echo "  sessions started before the disable still enforce Bash-write denials until restarted"
+    fi
     n=$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(len(d["sandbox"]["filesystem"]["denyWrite"]))' "$DEST/managed-settings.json")
     echo "warden: installed ($n denyWrite entries)"
     echo "active in this shell: ${WARDEN_ACTIVE:-no (session started before install?)}"
@@ -301,9 +408,10 @@ for r in repos:
                                     r["root"]))
 EOF
     fi
+    exit "$STATUS_RC"
     ;;
   *)
-    echo "usage: warden {refresh|land [branch]|remote add <name> <url>|forget <repo>|selftest|codex-selftest|status}" >&2
+    echo "usage: warden {disable|enable|refresh|land [branch]|remote add <name> <url>|forget <repo>|selftest|codex-selftest|status}" >&2
     exit 2
     ;;
 esac

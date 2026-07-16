@@ -108,7 +108,12 @@ layer.
 - PreToolUse[Bash]: audit-only (never denies — the sandbox owns Bash).
 - SessionStart: one context line announcing enforcement + the session's
   writable scope (legibility; not load-bearing).
-- WorktreeCreate/WorktreeRemove: audit + touch a refresh-request flag.
+- WorktreeCreate/WorktreeRemove: NOT wired (learned at activation: Claude Code
+  treats WorktreeCreate as generative — a registered hook must create the
+  worktree and return its path, replacing built-in creation; an observational
+  hook breaks `claude -w` machine-wide). Registry refresh is manual
+  (`sudo warden refresh`) or daemon-driven (gate G2). guard.py retains the
+  event handlers in case a future version adds observational worktree events.
 
 Guard failure mode: allow-and-audit on internal error (availability), deny
 only on positive classification; the sandbox remains the wall regardless.

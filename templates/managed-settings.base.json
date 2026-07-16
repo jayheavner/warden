@@ -19,12 +19,6 @@
     ],
     "SessionStart": [
       { "hooks": [{ "type": "command", "command": "python3 '/Library/Application Support/ClaudeCode/warden/guard.py'" }] }
-    ],
-    "WorktreeCreate": [
-      { "hooks": [{ "type": "command", "command": "python3 '/Library/Application Support/ClaudeCode/warden/guard.py'" }] }
-    ],
-    "WorktreeRemove": [
-      { "hooks": [{ "type": "command", "command": "python3 '/Library/Application Support/ClaudeCode/warden/guard.py'" }] }
     ]
   },
   "env": { "WARDEN_ACTIVE": "1" }

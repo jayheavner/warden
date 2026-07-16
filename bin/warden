@@ -95,6 +95,23 @@ try:
 except (OSError, ValueError):
     print("registry: missing")
 PY
+    # multi-git governance probe: every git a session might invoke must have
+    # the warden include resolvable in ITS system config chain (a Homebrew
+    # git reads its own prefix's etc/gitconfig, not /etc/gitconfig).
+    CANDIDATES="${WARDEN_GIT_CANDIDATES:-/usr/bin/git:/usr/local/bin/git:/opt/homebrew/bin/git:/opt/local/bin/git}"
+    IFS=':' read -ra GITS <<< "$CANDIDATES"
+    for g in "${GITS[@]}"; do
+      [ -x "$g" ] || continue
+      ver="$("$g" --version 2>/dev/null | awk '{print $3}')"
+      new_enough="$(printf '%s' "$ver" | awk -F. '{print ($1>2 || ($1==2 && $2>=28)) ? 1 : 0}')"
+      if [ "$new_enough" != 1 ]; then
+        echo "git: $g $ver TOO OLD (<2.28: reference-transaction hook never runs)"
+      elif "$g" config --system --get-all include.path 2>/dev/null | grep -qxF "$WD/warden.gitconfig"; then
+        echo "git: $g $ver GOVERNED"
+      else
+        echo "git: $g $ver NOT GOVERNED (warden include absent from its system config)"
+      fi
+    done
     if [ -f "$WD/warden.gitconfig" ] && git config --file /etc/gitconfig --get-all include.path 2>/dev/null | grep -qxF "$WD/warden.gitconfig"; then
       echo "hook delivery: /etc/gitconfig include -> warden.gitconfig OK"
     elif [ -f "$WD/warden.gitconfig" ]; then

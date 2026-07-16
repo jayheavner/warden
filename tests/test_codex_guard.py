@@ -112,6 +112,23 @@ class TestCodexGuard(unittest.TestCase):
         self.assertEqual(p.returncode, 0)
         self.assertEqual(p.stdout.strip(), "")
 
+    def test_shared_root_write_allowed_when_disabled(self):
+        sentinel = os.path.join(self.tmp.name, "DISABLED")
+        json.dump({"disabled_at": "2026-01-01T00:00:00", "by_uid": 0},
+                  open(sentinel, "w"))
+        target = os.path.join(self.repo, "README.md")
+        env = dict(os.environ, WARDEN_AUDIT_FILE=self.audit,
+                   WARDEN_NO_SYSLOG="1", WARDEN_SENTINEL=sentinel)
+        p = subprocess.run(["python3", GUARD],
+                           input=json.dumps(pre_tool_use(
+                               "write_file", {"file_path": target}, self.wt1)),
+                           capture_output=True, text=True, env=env, timeout=30)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout.strip(), "")
+        rec = [json.loads(l) for l in open(self.audit)][-1]
+        self.assertEqual(rec["verdict"], "disabled-allow")
+        self.assertEqual(rec["harness"], "codex")
+
     def test_deny_audited_with_harness(self):
         target = os.path.join(self.wt2, "f.txt")
         run_hook(pre_tool_use("edit_file", {"path": target}, self.wt1),

@@ -73,7 +73,12 @@ def main():
     tool = data.get("tool_name", "")
     tin = data.get("tool_input") or {}
     base = {"harness": "codex", "session_id": sid, "cwd": cwd, "tool": tool}
+    since = guard.disabled_since()
     try:
+        if since:
+            guard._audit(dict(base, target=json.dumps(tin)[:500],
+                              verdict="disabled-allow", rule=""))
+            return 0
         if event == "PreToolUse":
             if escalation_requested(tin):
                 guard._audit(dict(base, target="<escalation-request>",

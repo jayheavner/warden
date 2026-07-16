@@ -51,7 +51,7 @@ def _notify_once(sid, since):
         os.makedirs(d, exist_ok=True)
         open(mark, "w").write(since + "\n")
     except OSError:
-        return
+        pass  # can't remember we notified; fail loud, print anyway
     print(json.dumps({"systemMessage":
                       DISABLED_BANNER % since + " " + DISABLED_ADDENDUM}))
 

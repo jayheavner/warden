@@ -142,6 +142,20 @@ class TestDisabled(unittest.TestCase):
                       "2026-07-16T10:00:00-04:00)", ctx)
         self.assertIn("sudo warden enable", ctx)
 
+    def test_banner_prints_even_when_notify_dir_unwritable(self):
+        unwritable_parent = os.path.join(self.tmp.name, "not_a_dir")
+        open(unwritable_parent, "w").write("i am a file, not a directory\n")
+        env = dict(os.environ, WARDEN_AUDIT_FILE=self.audit,
+                   WARDEN_NO_SYSLOG="1", WARDEN_SENTINEL=self.sentinel,
+                   WARDEN_NOTIFY_DIR=os.path.join(unwritable_parent, "notified"))
+        p = payload("Edit", {"file_path": os.path.join(self.repo, "a.md")},
+                    self.wt)
+        r = subprocess.run(["python3", GUARD], input=json.dumps(p),
+                           capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0)
+        out = json.loads(r.stdout)
+        self.assertIn("Warden enforcement is DISABLED", out["systemMessage"])
+
     def test_sentinel_anomalies_mean_enabled(self):
         for spoil in ("dir", "badjson"):
             os.remove(self.sentinel) if os.path.isfile(self.sentinel) else None

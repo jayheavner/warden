@@ -1,6 +1,13 @@
 #!/bin/bash
-# warden R1 hook (reference-transaction): refuse moving refs/heads/<b> when
-# <b> is checked out in a worktree other than the one this command runs in.
+# warden ref hook (reference-transaction), two rules:
+#   R1 — refuse moving refs/heads/<b> when <b> is checked out in a worktree
+#        other than the one this command runs in.
+#   R2 — refuse moving or deleting any EXISTING refs/heads/* from an agent
+#        session (Claude Code / Codex env markers) when the command runs at a
+#        shared checkout root (the main worktree). Branch creation stays open
+#        so `git worktree add` works; bare repos (push receive side) and
+#        human shells are exempt. R2 holds even for sessions the Bash sandbox
+#        never bound to (headless runs, sessions started before install).
 # Fail-open: any internal error exits 0 (a broken hook must never become a
 # machine-wide git outage); exit 1 only on positive classification.
 # Chains to the repo's own hook afterward. Spec: v1.1 design section 3.
@@ -12,19 +19,36 @@ warden_disabled=""
 [ -f "$sentinel" ] && warden_disabled=1
 
 deny_reason=""
+deny_rule=""
 if [ "$state" = "prepared" ] && [ -z "$warden_disabled" ]; then
   wtlist="$(git worktree list --porcelain 2>/dev/null || true)"   # once per transaction
   here="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  # R2 preconditions: agent-session env marker + command runs at the main
+  # worktree (its git dir is <root>/.git; bare repos have no toplevel).
+  agent_at_root=""
+  if [ -n "${CLAUDECODE:-}${CLAUDE_CODE_ENTRYPOINT:-}${WARDEN_ACTIVE:-}${CODEX_SANDBOX:-}" ] && [ -n "$here" ]; then
+    gd="$(git rev-parse --absolute-git-dir 2>/dev/null || true)"
+    [ "$gd" = "$here/.git" ] && agent_at_root=1
+  fi
   if [ -n "$wtlist" ] && [ -n "$here" ]; then
     while IFS= read -r line; do
       [ -n "$line" ] || continue
       ref="${line##* }"
       case "$ref" in refs/heads/*) ;; *) continue ;; esac
+      # Existence check, not the transaction's old value: updates made without
+      # an old-value assertion (git update-ref <ref> <new>) report old as all
+      # zeros and would masquerade as creations.
+      if [ -n "$agent_at_root" ] && git rev-parse -q --verify "$ref" >/dev/null 2>&1; then
+        deny_rule="R2"
+        deny_reason="warden R2: refusing to move $ref — this is the shared checkout at $here, which is read-only to agent sessions. Do this work in your own worktree and integrate with 'warden land'."
+        break
+      fi
       wt="$(printf '%s\n' "$wtlist" | awk -v want="branch $ref" '
         index($0, "worktree ") == 1 { w = substr($0, 10) }
         $0 == want { print w; exit }')"
       [ -n "$wt" ] || continue                                    # detached/unmatched: no opinion
       if [ "$wt" != "$here" ]; then
+        deny_rule="R1"
         deny_reason="warden R1: refusing to move $ref — that branch is checked out at $wt and this command runs at $here. Commit in that worktree instead."
         break
       fi
@@ -39,15 +63,15 @@ if [ -n "$deny_reason" ]; then
   audit="${WARDEN_AUDIT_FILE:-$HOME/.claude/warden/audit.jsonl}"
   {
     mkdir -p "$(dirname "$audit")" 2>/dev/null
-    python3 - "$audit" "$PWD" "$deny_reason" <<'PY' 2>/dev/null
+    python3 - "$audit" "$PWD" "$deny_reason" "$deny_rule" <<'PY' 2>/dev/null
 import datetime, json, sys
 rec = {"ts": datetime.datetime.now().astimezone().isoformat(),
        "session_id": "", "cwd": sys.argv[2],
        "tool": "git-reference-transaction", "target": sys.argv[3],
-       "verdict": "deny", "rule": "R1"}
+       "verdict": "deny", "rule": sys.argv[4]}
 open(sys.argv[1], "a").write(json.dumps(rec, ensure_ascii=False) + "\n")
 PY
-    logger -t warden "R1 deny: cwd=$PWD" 2>/dev/null
+    logger -t warden "$deny_rule deny: cwd=$PWD" 2>/dev/null
   } || true
   exit 1
 fi

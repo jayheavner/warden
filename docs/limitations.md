@@ -30,11 +30,17 @@ job, not a bug. The full derivation lives in
   git setting).
 
 - **Sessions whose working directory is a shared repo root.** Such a session
-  has its tracked tree frozen, so it can't do ordinary work there. It can
-  still create brand-new, untracked top-level files (litter, not corruption),
-  and its shell writes into a sibling worktree are recorded in the audit log
-  rather than blocked. The git-shaped version of that is closed by the ref
-  hook above.
+  has its tracked tree frozen, so it can't do ordinary work there; it gets a
+  session-start warning telling it to enter a worktree. It can still create
+  brand-new, untracked top-level files (litter, not corruption), and its
+  shell writes into a sibling worktree are recorded in the audit log rather
+  than blocked. The git-shaped version of that is closed by the ref hook
+  above, whose R2 rule also refuses agent-session moves or deletes of any
+  existing branch at a shared checkout root — including from headless or
+  pre-install sessions the Bash sandbox never bound to, since the hook rides
+  on git itself. R2 recognizes agent sessions by their environment markers
+  (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `WARDEN_ACTIVE`, `CODEX_SANDBOX`);
+  a session that scrubs those from its environment is not classified.
 
 - **Mixed fleets during a disable/enable flip.** `sudo warden disable` and
   `sudo warden enable` take effect live for the tool guard, the Codex guard,

@@ -11,6 +11,9 @@ pass() { echo "PASS $1"; PASSN=$((PASSN+1)); }
 fail() { echo "FAIL $1 ${2:-}"; FAILN=$((FAILN+1)); }
 export WARDEN_AUDIT_FILE="$T/audit.jsonl"
 export GIT_CONFIG_NOSYSTEM=1 HOME="$T/home"; mkdir -p "$HOME"
+# Baseline tests model a HUMAN shell; this suite itself often runs inside an
+# agent session, so strip the agent-session markers R2 keys on.
+unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT WARDEN_ACTIVE CODEX_SANDBOX
 git() { command git -c user.email=t@t -c user.name=t "$@"; }
 
 # fixture: main repo, side branch + worktree, detached worktree, bare remote
@@ -87,6 +90,40 @@ rm -f "$T/main/.git/hooks/reference-transaction" "$T/marker"
 git update-ref refs/heads/side HEAD~1 2>/dev/null
 git update-ref refs/heads/side HEAD 2>/dev/null && fail "sentinel: regression still denies" "succeeded" || pass "sentinel: regression still denies"
 rm -f "$T/sentinel"
+
+# --- R2: agent sessions may not move existing branches at a shared checkout root ---
+cd "$T/main"
+# 14: agent commit at shared root refused, named reason + audit rule
+if CLAUDECODE=1 git commit -q --allow-empty -m nope3 2>"$T/err14"; then
+  fail "R2 agent commit at shared root refused" "succeeded"
+else
+  grep -q "warden R2" "$T/err14" && pass "R2 agent commit at shared root refused" || fail "R2 agent commit at shared root refused" "no named reason: $(cat "$T/err14")"
+fi
+{ grep -q '"rule": "R2"' "$WARDEN_AUDIT_FILE" || grep -q '"rule":"R2"' "$WARDEN_AUDIT_FILE"; } \
+  && pass "R2 audit record written" || fail "R2 audit record written"
+# 15: agent reset of the shared checkout's own branch refused
+OWNBR="$(git symbolic-ref --short HEAD)"
+CLAUDECODE=1 git update-ref "refs/heads/$OWNBR" HEAD~1 2>/dev/null \
+  && fail "R2 agent reset at shared root refused" "succeeded" || pass "R2 agent reset at shared root refused"
+# 16: agent commit inside its own linked worktree passes
+(cd "$T/side-wt" && CLAUDECODE=1 git commit -q --allow-empty -m ok4) \
+  && pass "R2 agent commit in own worktree passes" || fail "R2 agent commit in own worktree passes"
+# 17: agent branch CREATION at shared root passes (worktree add needs it)
+CLAUDECODE=1 git branch agent-new 2>/dev/null \
+  && pass "R2 agent branch creation passes" || fail "R2 agent branch creation passes"
+# 18: agent push to a local bare remote passes (receive side is bare, exempt)
+CLAUDECODE=1 git push -q "$T/remote.git" "+HEAD:refs/heads/r1" 2>/dev/null \
+  && pass "R2 agent push to bare remote passes" || fail "R2 agent push to bare remote passes"
+# 19: human commit at shared root still passes after R2
+git commit -q --allow-empty -m ok5 && pass "R2 human commit unaffected" || fail "R2 human commit unaffected"
+# 20: sentinel disables R2 too
+printf '{"disabled_at":"x","by_uid":0}' > "$T/sentinel"
+WARDEN_SENTINEL="$T/sentinel" CLAUDECODE=1 git commit -q --allow-empty -m ok6 2>/dev/null \
+  && pass "R2 sentinel-disabled agent commit passes" || fail "R2 sentinel-disabled agent commit passes"
+rm -f "$T/sentinel"
+# 21: WARDEN_ACTIVE marker alone also classifies as agent
+WARDEN_ACTIVE=1 git commit -q --allow-empty -m nope4 2>/dev/null \
+  && fail "R2 WARDEN_ACTIVE marker refused" "succeeded" || pass "R2 WARDEN_ACTIVE marker refused"
 
 echo "== $PASSN pass, $FAILN fail"
 [ "$FAILN" -eq 0 ]

@@ -188,13 +188,27 @@ def main():
                 _audit(dict(base, target=(tin.get("command") or "")[:500],
                             verdict="audit", rule=""))
         elif event == "SessionStart":
-            scope = worktree_container(_resolve(cwd)) or cwd
+            rcwd = _resolve(cwd)
+            wt = worktree_container(rcwd)
+            root = None if wt else shared_root(rcwd)
+            scope = wt or cwd
             if since:
                 _audit(dict(base, target=scope, verdict="session-start-disabled",
                             rule=""))
                 print(json.dumps({"hookSpecificOutput": {
                     "hookEventName": "SessionStart",
                     "additionalContext": DISABLED_BANNER % since}}))
+            elif root:
+                _audit(dict(base, target=root,
+                            verdict="session-start-shared-root", rule="I2"))
+                print(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext":
+                        "⚠ warden: this session started in the shared checkout "
+                        "%s, which is read-only to every session — writes, "
+                        "commits, and branch moves here are denied. Create or "
+                        "enter a worktree before doing any work (the app "
+                        "creates one per session)." % root}}))
             else:
                 _audit(dict(base, target=scope, verdict="session-start", rule=""))
                 print(json.dumps({"hookSpecificOutput": {

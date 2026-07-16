@@ -71,6 +71,16 @@ class TestMain(unittest.TestCase):
         self.assertIn(self.wt, out["additionalContext"])
         self.assertIn("warden land", out["additionalContext"])
 
+    def test_sessionstart_at_shared_root_warns(self):
+        p = run_hook(payload("", {}, self.repo, event="SessionStart"), self.audit)
+        out = json.loads(p.stdout)["hookSpecificOutput"]
+        self.assertEqual(out["hookEventName"], "SessionStart")
+        self.assertIn("read-only", out["additionalContext"])
+        self.assertIn("worktree", out["additionalContext"])
+        self.assertIn(self.repo, out["additionalContext"])
+        self.assertNotIn("warden land", out["additionalContext"])
+        self.assertEqual(self.last_audit()["verdict"], "session-start-shared-root")
+
     def test_worktree_create_touches_refresh_flag(self):
         home = os.path.join(self.tmp.name, "home")
         env_home = dict(os.environ, WARDEN_AUDIT_FILE=self.audit,

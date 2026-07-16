@@ -477,7 +477,7 @@ class TestRemoteAdd(unittest.TestCase):
         self.assert_rejected(self.request(repo="/no/such"), "registry")
 
     def test_bad_remote_names_rejected(self):
-        for name in ("-evil", "", "a name", "a;b", "../up"):
+        for name in ("-evil", "", "a name", "a;b", "../up", "origin\n"):
             self.assert_rejected(self.request(name=name), "remote name")
 
     def test_non_transport_urls_rejected(self):

@@ -292,7 +292,7 @@ def process_request(req, registry, demote=True,
     return out
 
 
-REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 # https or ssh git URLs only: no file://, ext::, local paths, options, or
 # whitespace — the daemon writes remote.<name>.url into a root-protected
 # .git/config, so anything a git transport could execute is rejected.

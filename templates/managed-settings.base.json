@@ -1,0 +1,31 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "filesystem": { "denyWrite": [] }
+  },
+  "permissions": {
+    "deny": [
+      "Edit(//Library/Application Support/ClaudeCode/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [{ "type": "command", "command": "python3 '/Library/Application Support/ClaudeCode/warden/guard.py'" }] },
+      { "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "python3 '/Library/Application Support/ClaudeCode/warden/guard.py'" }] }
+    ],
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "python3 '/Library/Application Support/ClaudeCode/warden/guard.py'" }] }
+    ],
+    "WorktreeCreate": [
+      { "hooks": [{ "type": "command", "command": "python3 '/Library/Application Support/ClaudeCode/warden/guard.py'" }] }
+    ],
+    "WorktreeRemove": [
+      { "hooks": [{ "type": "command", "command": "python3 '/Library/Application Support/ClaudeCode/warden/guard.py'" }] }
+    ]
+  },
+  "env": { "WARDEN_ACTIVE": "1" }
+}

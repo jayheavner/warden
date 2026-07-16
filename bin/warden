@@ -1,32 +1,106 @@
 #!/bin/bash
-# warden CLI: refresh (root), selftest (run inside a session), status (anyone).
-set -euo pipefail
-DEST="/Library/Application Support/ClaudeCode"
+# warden CLI: refresh (root or WARDEN_DEST test mode), selftest, status.
+set -uo pipefail
+DEST="${WARDEN_DEST:-/Library/Application Support/ClaudeCode}"
 WD="$DEST/warden"
+DAEMON_LABEL="com.warden.refresh"
+
+health() {  # health <ok|fail> <registry+settings paths | error text>
+  python3 - "$WD/last-refresh.json" "$@" <<'PY'
+import datetime, json, os, sys
+path, verdict = sys.argv[1], sys.argv[2]
+rec = {"ok": verdict == "ok",
+       "ts": datetime.datetime.now().astimezone().isoformat()}
+if verdict == "ok":
+    reg = json.load(open(sys.argv[3]))
+    ms = json.load(open(sys.argv[4]))
+    rec["repos"] = len(reg["repos"])
+    rec["deny"] = len(ms["sandbox"]["filesystem"]["denyWrite"])
+else:
+    rec["error"] = sys.argv[3][:500]
+tmp = path + ".tmp"
+json.dump(rec, open(tmp, "w"))
+os.replace(tmp, path)
+PY
+}
 
 case "${1:-status}" in
   refresh)
-    if [ "$(id -u)" -ne 0 ]; then echo "run: sudo warden refresh" >&2; exit 1; fi
+    if [ -z "${WARDEN_DEST:-}" ] && [ "$(id -u)" -ne 0 ]; then
+      echo "run: sudo warden refresh" >&2; exit 1
+    fi
+    LOG="$WD/refresh.log"
+    if [ -f "$LOG" ] && [ "$(stat -f%z "$LOG" 2>/dev/null || echo 0)" -gt 524288 ]; then
+      tail -c 65536 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+    fi
     SCAN_HOME="${SUDO_USER:+/Users/$SUDO_USER}"
     SCAN_HOME="${SCAN_HOME:-$HOME}"
-    python3 "$WD/render.py" \
-      --scan "${WARDEN_SCAN_DIR:-$SCAN_HOME/claude}" \
-      --base "$WD/managed-settings.base.json" \
-      --write-settings "$DEST/managed-settings.json" \
-      --write-registry "$WD/registry.json"
-    chown root:wheel "$DEST/managed-settings.json" "$WD/registry.json"
-    chmod 0644 "$DEST/managed-settings.json" "$WD/registry.json"
+    BASE="${WARDEN_BASE_OVERRIDE:-$WD/managed-settings.base.json}"
+    if err="$(python3 "$WD/render.py" \
+        --scan "${WARDEN_SCAN_DIR:-$SCAN_HOME/claude}" \
+        --base "$BASE" \
+        --write-settings "$DEST/managed-settings.json" \
+        --write-registry "$WD/registry.json" \
+        --write-gitconfig "$WD/warden.gitconfig" 2>&1)"; then
+      echo "$err"
+      if [ "$(id -u)" -eq 0 ]; then
+        chown root:wheel "$DEST/managed-settings.json" "$WD/registry.json" "$WD/warden.gitconfig"
+        chmod 0644 "$DEST/managed-settings.json" "$WD/registry.json" "$WD/warden.gitconfig"
+      fi
+      health ok "$WD/registry.json" "$DEST/managed-settings.json"
+      python3 - "$WD/registry.json" <<'PY'
+import json, sys
+reg = json.load(open(sys.argv[1]))
+bad = [r["root"] for r in reg["repos"] if r.get("hookspath_override")]
+if bad:
+    print("WARNING: local core.hooksPath overrides warden hook in:", *bad)
+PY
+    else
+      echo "$err" >&2
+      health fail "$err"
+      exit 1
+    fi
     ;;
   selftest)
     exec bash "$WD/selftest.sh"
     ;;
   status)
-    if [ -f "$DEST/managed-settings.json" ]; then
-      n=$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(len(d["sandbox"]["filesystem"]["denyWrite"]))' "$DEST/managed-settings.json")
-      echo "warden: installed ($n denyWrite entries)"
-      echo "active in this shell: ${WARDEN_ACTIVE:-no (session started before install?)}"
+    if [ ! -f "$DEST/managed-settings.json" ]; then
+      echo "warden: not installed"; exit 0
+    fi
+    n=$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(len(d["sandbox"]["filesystem"]["denyWrite"]))' "$DEST/managed-settings.json")
+    echo "warden: installed ($n denyWrite entries)"
+    echo "active in this shell: ${WARDEN_ACTIVE:-no (session started before install?)}"
+    if launchctl print "system/$DAEMON_LABEL" >/dev/null 2>&1; then
+      echo "daemon: loaded ($DAEMON_LABEL)"
     else
-      echo "warden: not installed"
+      echo "daemon: NOT LOADED"
+    fi
+    python3 - "$WD/last-refresh.json" "$WD/registry.json" <<'PY'
+import datetime, json, sys
+def age(iso):
+    dt = datetime.datetime.fromisoformat(iso)
+    s = (datetime.datetime.now().astimezone() - dt).total_seconds()
+    return "%dm ago" % (s // 60) if s < 7200 else "%dh ago" % (s // 3600)
+try:
+    h = json.load(open(sys.argv[1]))
+    print("refresh: %s %s%s" % ("ok" if h["ok"] else "FAILED", age(h["ts"]),
+          "" if h["ok"] else ": " + h.get("error", "?")))
+except (OSError, ValueError):
+    print("refresh: never ran")
+try:
+    r = json.load(open(sys.argv[2]))
+    print("registry: %d repos, rendered %s" % (len(r["repos"]),
+                                               age(r["generated_at"])))
+except (OSError, ValueError):
+    print("registry: missing")
+PY
+    if [ -f "$WD/warden.gitconfig" ] && git config --file /etc/gitconfig --get-all include.path 2>/dev/null | grep -qxF "$WD/warden.gitconfig"; then
+      echo "hook delivery: /etc/gitconfig include -> warden.gitconfig OK"
+    elif [ -f "$WD/warden.gitconfig" ]; then
+      echo "hook delivery: warden.gitconfig rendered but /etc/gitconfig include MISSING"
+    else
+      echo "hook delivery: not rendered"
     fi
     ;;
   *)

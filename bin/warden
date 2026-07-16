@@ -1,0 +1,36 @@
+#!/bin/bash
+# warden CLI: refresh (root), selftest (run inside a session), status (anyone).
+set -euo pipefail
+DEST="/Library/Application Support/ClaudeCode"
+WD="$DEST/warden"
+
+case "${1:-status}" in
+  refresh)
+    if [ "$(id -u)" -ne 0 ]; then echo "run: sudo warden refresh" >&2; exit 1; fi
+    SCAN_HOME="${SUDO_USER:+/Users/$SUDO_USER}"
+    SCAN_HOME="${SCAN_HOME:-$HOME}"
+    python3 "$WD/render.py" \
+      --scan "${WARDEN_SCAN_DIR:-$SCAN_HOME/claude}" \
+      --base "$WD/managed-settings.base.json" \
+      --write-settings "$DEST/managed-settings.json" \
+      --write-registry "$WD/registry.json"
+    chown root:wheel "$DEST/managed-settings.json" "$WD/registry.json"
+    chmod 0644 "$DEST/managed-settings.json" "$WD/registry.json"
+    ;;
+  selftest)
+    exec bash "$WD/selftest.sh"
+    ;;
+  status)
+    if [ -f "$DEST/managed-settings.json" ]; then
+      n=$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(len(d["sandbox"]["filesystem"]["denyWrite"]))' "$DEST/managed-settings.json")
+      echo "warden: installed ($n denyWrite entries)"
+      echo "active in this shell: ${WARDEN_ACTIVE:-no (session started before install?)}"
+    else
+      echo "warden: not installed"
+    fi
+    ;;
+  *)
+    echo "usage: warden {refresh|selftest|status}" >&2
+    exit 2
+    ;;
+esac

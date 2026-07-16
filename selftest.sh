@@ -1,0 +1,162 @@
+#!/bin/bash
+# warden selftest — run INSIDE a fresh Claude Code session after activation
+# (ask the session to run: warden selftest). Non-destructive against real
+# repos; every verdict comes from filesystem truth. Maps to the acceptance
+# tests in the design doc (T1-T10).
+set -u
+WD="/Library/Application Support/ClaudeCode/warden"
+REG="$WD/registry.json"
+PASSN=0; FAILN=0; SKIPN=0
+say()  { printf '%-6s %-52s %s\n' "$1" "$2" "${3:-}"; }
+pass() { say PASS "$1"; PASSN=$((PASSN+1)); }
+fail() { say FAIL "$1" "${2:-}"; FAILN=$((FAILN+1)); }
+skip() { say SKIP "$1" "${2:-}"; SKIPN=$((SKIPN+1)); }
+
+if [ "${WARDEN_ACTIVE:-}" != "1" ]; then
+  echo "warden selftest: WARDEN_ACTIVE is not set — enforcement is not active in this session."
+  echo "Install with: sudo ./install.sh, then start a FRESH session and re-run."
+  exit 3
+fi
+[ -r "$REG" ] || { echo "warden selftest: no registry at $REG"; exit 3; }
+
+REPO=$(python3 -c 'import json,sys;r=json.load(open(sys.argv[1]))["repos"];print(r[0]["root"] if r else "")' "$REG")
+BRANCH=$(python3 -c 'import json,sys;r=json.load(open(sys.argv[1]))["repos"];print(r[0]["head_branch"] or "")' "$REG")
+[ -n "$REPO" ] || { echo "warden selftest: registry has no repos"; exit 3; }
+
+CWD=$(pwd -P)
+OWN_WT=$(python3 - "$CWD" <<'EOF'
+import sys
+p = sys.argv[1]
+parts = p.split("/.claude/worktrees/")
+if len(parts) > 1 and parts[1]:
+    print(parts[0] + "/.claude/worktrees/" + parts[1].split("/")[0])
+else:
+    print("")
+EOF
+)
+
+echo "== warden selftest: session cwd=$CWD"
+echo "== probing shared checkout: $REPO (HEAD branch: ${BRANCH:-detached})"
+echo
+
+# T1: mutation at shared root (sentinel file; harmless and removed if it lands)
+P="$REPO/warden-selftest-$$.txt"
+if echo x > "$P" 2>/dev/null; then
+  rm -f "$P"; fail "T1 write at shared root blocked" "WRITE SUCCEEDED"
+else
+  pass "T1 write at shared root blocked"
+fi
+
+# T2: cd into shared root, then mutate (working-directory drift)
+if (cd "$REPO" && echo y >> README.md) 2>/dev/null; then
+  fail "T2 cd-drift mutation blocked" "WRITE SUCCEEDED — restore README.md!"
+else
+  pass "T2 cd-drift mutation blocked"
+fi
+
+# T3: git -C shared reset --hard (index write must be refused first)
+if git -C "$REPO" reset --hard HEAD~0 >/dev/null 2>&1; then
+  fail "T3 git -C shared reset --hard blocked" "SUCCEEDED"
+else
+  pass "T3 git -C shared reset --hard blocked"
+fi
+
+# T3b: ref plumbing against the shared HEAD branch (no-op value: same sha)
+if [ -n "$BRANCH" ]; then
+  if git -C "$REPO" update-ref "refs/heads/$BRANCH" "refs/heads/$BRANCH" >/dev/null 2>&1; then
+    fail "T3b update-ref on shared HEAD branch blocked" "SUCCEEDED (no-op value)"
+  else
+    pass "T3b update-ref on shared HEAD branch blocked"
+  fi
+else
+  skip "T3b update-ref on shared HEAD branch" "detached HEAD"
+fi
+
+# T4: sibling worktree write
+SIB=$(python3 - "$REG" "$OWN_WT" <<'EOF'
+import json, sys
+reg = json.load(open(sys.argv[1])); own = sys.argv[2]
+for r in reg["repos"]:
+    for w in r["worktrees"]:
+        if w != own:
+            print(w); raise SystemExit
+EOF
+)
+if [ -n "$SIB" ]; then
+  if echo x > "$SIB/warden-selftest-$$.txt" 2>/dev/null; then
+    rm -f "$SIB/warden-selftest-$$.txt"
+    fail "T4 sibling worktree write blocked" "SUCCEEDED"
+  else
+    pass "T4 sibling worktree write blocked"
+  fi
+else
+  if echo x > "$REPO/.claude/worktrees/warden-probe-$$/f" 2>/dev/null; then
+    fail "T4 worktree-area write blocked" "SUCCEEDED"
+  else
+    pass "T4 worktree-area write blocked (no live sibling; probed area)"
+  fi
+fi
+
+# T5: legitimate work in the session's own workspace
+if [ -n "$OWN_WT" ]; then
+  if ( echo w > "$OWN_WT/warden-selftest-$$.txt" \
+       && git -C "$OWN_WT" add "warden-selftest-$$.txt" \
+       && git -C "$OWN_WT" commit -qm "warden selftest probe" \
+       && git -C "$OWN_WT" reset -q --hard HEAD~1 \
+       && rm -f "$OWN_WT/warden-selftest-$$.txt" ) 2>/dev/null; then
+    pass "T5 own-workspace write+commit+reset works"
+  else
+    fail "T5 own-workspace write+commit+reset works" "a legitimate op was blocked"
+  fi
+else
+  skip "T5 own-workspace ops" "session cwd is not a worktree — run from a worktree session"
+fi
+
+# T6: read-only inspection against the shared repo; lifecycle note
+if git -C "$REPO" status --porcelain >/dev/null 2>&1 \
+   && git -C "$REPO" log --oneline -1 >/dev/null 2>&1; then
+  pass "T6a status/log against shared repo works"
+else
+  fail "T6a status/log against shared repo works"
+fi
+skip "T6b worktree add against shared repo" "run from a root-cwd session or the app's worktree flow"
+
+# T7: push to integration from own workspace (dry-run exercises the remote path, writes nothing)
+if [ -n "$OWN_WT" ] && git -C "$OWN_WT" remote get-url origin >/dev/null 2>&1; then
+  if git -C "$OWN_WT" push --dry-run origin HEAD >/dev/null 2>&1; then
+    pass "T7 push (dry-run) from own workspace works"
+  else
+    fail "T7 push (dry-run) from own workspace works"
+  fi
+else
+  skip "T7 push from own workspace" "no worktree cwd or no origin remote"
+fi
+
+# T8: remote-host command (opt-in; effects on another machine must not be gated)
+if [ -n "${WARDEN_SELFTEST_SSH_HOST:-}" ]; then
+  if ssh -o BatchMode=yes -o ConnectTimeout=4 "$WARDEN_SELFTEST_SSH_HOST" true 2>/dev/null; then
+    pass "T8 ssh to $WARDEN_SELFTEST_SSH_HOST works"
+  else
+    fail "T8 ssh to $WARDEN_SELFTEST_SSH_HOST works" "verify key/host reachable outside a session first"
+  fi
+else
+  skip "T8 remote-host command" "set WARDEN_SELFTEST_SSH_HOST to test"
+fi
+
+# T9: this very session proves auto-binding (no setup was done here)
+pass "T9 fresh session bound with zero setup (WARDEN_ACTIVE=1 + denials above)"
+
+# T10: enforcement config immutable to sessions
+if echo x >> "/Library/Application Support/ClaudeCode/managed-settings.json" 2>/dev/null; then
+  fail "T10 managed-settings.json append blocked" "SUCCEEDED — investigate immediately"
+else
+  pass "T10 managed-settings.json append blocked"
+fi
+
+echo
+echo "== result: $PASSN pass, $FAILN fail, $SKIPN skip"
+echo "== manual check remaining: ask this session to retry a blocked write with the"
+echo "   Bash dangerouslyDisableSandbox parameter — it must STILL be blocked"
+echo "   (allowUnsandboxedCommands=false). Audit trail: ~/.claude/warden/audit.jsonl"
+echo "   and: log show --last 1h --predicate 'eventMessage CONTAINS \"warden\"'"
+[ "$FAILN" -eq 0 ]

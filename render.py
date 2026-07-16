@@ -63,6 +63,39 @@ def render_settings(base, repos, managed_root):
     return out
 
 
+# shared-.git paths a worktree session must write for normal git work
+# (lab-proven carve-out set; also fixes upstream codex worktree-commit bug)
+CODEX_GIT_CARVEOUTS = ["objects/**", "refs/**", "logs/**", "worktrees/**",
+                       "packed-refs", "packed-refs.lock", "FETCH_HEAD"]
+
+
+def codex_fs_rules(repos, managed_root):
+    rules = {managed_root.rstrip("/") + "/**": "deny"}
+    for r in repos:
+        root = r["root"]
+        for c in CODEX_GIT_CARVEOUTS:
+            rules[root + "/.git/" + c] = "write"
+        for f in ["index", "HEAD", "config", "hooks/**", "info/**"]:
+            rules[root + "/.git/" + f] = "deny"
+        if r["head_branch"]:
+            ref = root + "/.git/refs/heads/" + r["head_branch"]
+            for f in [ref, ref + ".lock",
+                      root + "/.git/logs/refs/heads/" + r["head_branch"]]:
+                rules[f] = "deny"
+        for entry in r["top_entries"]:
+            rules[root + "/" + entry] = "deny"
+        rules[root + "/.claude/settings.json"] = "deny"
+        rules[root + "/.codex/**"] = "deny"
+    return rules
+
+
+def render_codex_requirements(base_text, repos, managed_root):
+    lines = [base_text.rstrip("\n"), "", "[permissions.warden.filesystem]"]
+    for path, access in sorted(codex_fs_rules(repos, managed_root).items()):
+        lines.append("%s = %s" % (json.dumps(path), json.dumps(access)))
+    return "\n".join(lines) + "\n"
+
+
 def _atomic_write(path, obj):
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
@@ -72,24 +105,49 @@ def _atomic_write(path, obj):
     os.replace(tmp, path)
 
 
+def _atomic_write_text(path, text, validate):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(text)
+    validate(open(tmp).read())    # refuse to swap in unparseable output
+    os.replace(tmp, path)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--scan", action="append", required=True)
     ap.add_argument("--base", required=True)
     ap.add_argument("--write-settings", required=True)
     ap.add_argument("--write-registry", required=True)
-    ap.add_argument("--managed-root",
-                    default="/Library/Application Support/ClaudeCode")
+    ap.add_argument("--managed-root", default=None)
+    ap.add_argument("--format", choices=["claude", "codex"], default="claude")
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args(argv)
-    base = json.load(open(a.base))
+    if a.managed_root is None:
+        a.managed_root = ("/etc/codex" if a.format == "codex"
+                          else "/Library/Application Support/ClaudeCode")
     repos = scan_repos(a.scan)
-    settings = render_settings(base, repos, a.managed_root)
     registry = {
         "generated_at": datetime.datetime.now().astimezone().isoformat(),
         "scanned": a.scan,
         "repos": repos,
     }
+    if a.format == "codex":
+        import tomllib
+        text = render_codex_requirements(open(a.base).read(), repos,
+                                         a.managed_root)
+        tomllib.loads(text)
+        if a.check:
+            print(text)
+            return 0
+        _atomic_write_text(a.write_settings, text, tomllib.loads)
+        _atomic_write(a.write_registry, registry)
+        rules = codex_fs_rules(repos, a.managed_root)
+        print("wrote %s (%d repos, %d filesystem rules)" % (
+            a.write_settings, len(repos), len(rules)))
+        return 0
+    base = json.load(open(a.base))
+    settings = render_settings(base, repos, a.managed_root)
     if a.check:
         print(json.dumps({"settings": settings, "registry": registry},
                          indent=2, sort_keys=True))

@@ -1,36 +1,64 @@
 #!/bin/bash
-# warden CLI: refresh (root), selftest (run inside a session), status (anyone).
+# warden CLI: refresh (root; renders every installed harness), selftest /
+# codex-selftest (run inside a session), status (anyone).
 set -euo pipefail
 DEST="/Library/Application Support/ClaudeCode"
 WD="$DEST/warden"
+CDEST="/etc/codex"
+CWD_CODEX="$CDEST/warden"
 
 case "${1:-status}" in
   refresh)
     if [ "$(id -u)" -ne 0 ]; then echo "run: sudo warden refresh" >&2; exit 1; fi
     SCAN_HOME="${SUDO_USER:+/Users/$SUDO_USER}"
     SCAN_HOME="${SCAN_HOME:-$HOME}"
-    python3 "$WD/render.py" \
-      --scan "${WARDEN_SCAN_DIR:-$SCAN_HOME/claude}" \
-      --base "$WD/managed-settings.base.json" \
-      --write-settings "$DEST/managed-settings.json" \
-      --write-registry "$WD/registry.json"
-    chown root:wheel "$DEST/managed-settings.json" "$WD/registry.json"
-    chmod 0644 "$DEST/managed-settings.json" "$WD/registry.json"
+    SCAN_DIR="${WARDEN_SCAN_DIR:-$SCAN_HOME/claude}"
+    did=0
+    if [ -d "$WD" ]; then
+      python3 "$WD/render.py" \
+        --scan "$SCAN_DIR" \
+        --base "$WD/managed-settings.base.json" \
+        --write-settings "$DEST/managed-settings.json" \
+        --write-registry "$WD/registry.json"
+      chown root:wheel "$DEST/managed-settings.json" "$WD/registry.json"
+      chmod 0644 "$DEST/managed-settings.json" "$WD/registry.json"
+      did=1
+    fi
+    if [ -d "$CWD_CODEX" ]; then
+      python3 "$CWD_CODEX/render.py" --format codex \
+        --scan "$SCAN_DIR" \
+        --base "$CWD_CODEX/requirements.base.toml" \
+        --write-settings "$CDEST/requirements.toml" \
+        --write-registry "$CWD_CODEX/registry.json"
+      chown root:wheel "$CDEST/requirements.toml" "$CWD_CODEX/registry.json"
+      chmod 0644 "$CDEST/requirements.toml" "$CWD_CODEX/registry.json"
+      did=1
+    fi
+    [ "$did" -eq 1 ] || { echo "warden refresh: nothing installed" >&2; exit 1; }
     ;;
   selftest)
     exec bash "$WD/selftest.sh"
     ;;
+  codex-selftest)
+    exec bash "$CWD_CODEX/codex-selftest"
+    ;;
   status)
     if [ -f "$DEST/managed-settings.json" ]; then
       n=$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(len(d["sandbox"]["filesystem"]["denyWrite"]))' "$DEST/managed-settings.json")
-      echo "warden: installed ($n denyWrite entries)"
+      echo "warden (claude): installed ($n denyWrite entries)"
       echo "active in this shell: ${WARDEN_ACTIVE:-no (session started before install?)}"
     else
-      echo "warden: not installed"
+      echo "warden (claude): not installed"
+    fi
+    if [ -f "$CDEST/requirements.toml" ]; then
+      n=$(python3 -c 'import tomllib,sys;d=tomllib.loads(open(sys.argv[1]).read());print(len(d["permissions"]["warden"]["filesystem"]))' "$CDEST/requirements.toml")
+      echo "warden (codex): installed ($n filesystem rules)"
+    else
+      echo "warden (codex): not installed"
     fi
     ;;
   *)
-    echo "usage: warden {refresh|selftest|status}" >&2
+    echo "usage: warden {refresh|selftest|codex-selftest|status}" >&2
     exit 2
     ;;
 esac

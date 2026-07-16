@@ -1,0 +1,33 @@
+# warden managed requirements for Codex — rendered copy is written by
+# render.py --format codex; this file is the static base. Do not hand-edit
+# the rendered /etc/codex/requirements.toml.
+
+default_permissions = "warden"
+allowed_permission_profiles = ["warden"]
+allowed_sandbox_modes = ["read-only", "workspace-write"]
+
+[features]
+hooks = true
+
+[hooks]
+managed_dir = "/etc/codex/warden"
+
+[[hooks.PreToolUse]]
+matcher = ""
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "python3 /etc/codex/warden/codex_guard.py"
+timeout = 30
+
+[[hooks.SessionStart]]
+matcher = ""
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "python3 /etc/codex/warden/codex_guard.py"
+timeout = 30
+
+[permissions.warden]
+description = "warden session isolation (rendered from registry scan)"
+extends = ":workspace"

@@ -1,0 +1,85 @@
+fixture ready: git version 2.22.0
+
+#### FULL CARVE-OUTS (git version 2.22.0)
+== POSITIVE (must all PASS with carve-outs: /private/tmp/warden-lab.csLKbn/fix/alpha/.git/objects /private/tmp/warden-lab.csLKbn/fix/alpha/.git/refs /private/tmp/warden-lab.csLKbn/fix/alpha/.git/logs /private/tmp/warden-lab.csLKbn/fix/alpha/.git/worktrees/wt1 /private/tmp/warden-lab.csLKbn/fix/alpha/.git/packed-refs.lock:lit /private/tmp/warden-lab.csLKbn/fix/alpha/.git/packed-refs:lit /private/tmp/warden-lab.csLKbn/fix/alpha/.git/FETCH_HEAD:lit)
+status                             PASS
+log                                PASS
+commit                             PASS
+branch create                      PASS
+checkout -b                        PASS
+fetch                              PASS
+push own branch                    PASS
+push integration                   PASS
+stash push+pop                     PASS
+rebase onto origin                 PASS
+merge + reset own                  PASS
+clean own tree                     PASS
+status -C shared (read)            PASS
+fetch -C shared                    PASS
+
+== NEGATIVE (must all be blocked)
+write file in shared root          PASS(blocked)
+rm tracked file in shared          PASS(blocked)
+git -C shared commit               PASS(blocked)
+git -C shared reset --hard         PASS(blocked)
+git -C shared merge                PASS(blocked)
+git -C shared checkout -b          PASS(blocked)
+cd shared && commit                PASS(blocked)
+write into sibling wt2             PASS(blocked)
+git -C sibling wt2 commit          PASS(blocked)
+edit shared .git/config            PASS(blocked)
+edit shared .git/index             PASS(blocked)
+== KNOWN-RESIDUAL probes (documenting, not asserting)
+update-ref shared branch           PASS(blocked)
+worktree add from sandbox          PASS(blocked)
+
+== PROTECTED-BRANCH probe (deny main's loose ref + reflog on top of full carve-outs)
+own commit still works             PASS
+own push still works               PASS
+update-ref shared main             PASS(blocked)
+reset --soft moves shared main     PASS(blocked)
+branch -f shared main              PASS(blocked)
+
+######## SECOND GIT ########
+branch 'main' set up to track 'origin/main'.
+fixture ready: git version 2.50.1 (Apple Git-155)
+
+#### FULL CARVE-OUTS (git version 2.50.1 (Apple Git-155))
+== POSITIVE (must all PASS with carve-outs: /private/tmp/warden-lab.csLKbn/fix/alpha/.git/objects /private/tmp/warden-lab.csLKbn/fix/alpha/.git/refs /private/tmp/warden-lab.csLKbn/fix/alpha/.git/logs /private/tmp/warden-lab.csLKbn/fix/alpha/.git/worktrees/wt1 /private/tmp/warden-lab.csLKbn/fix/alpha/.git/packed-refs.lock:lit /private/tmp/warden-lab.csLKbn/fix/alpha/.git/packed-refs:lit /private/tmp/warden-lab.csLKbn/fix/alpha/.git/FETCH_HEAD:lit)
+status                             PASS
+log                                PASS
+commit                             PASS
+branch create                      PASS
+checkout -b                        PASS
+fetch                              PASS
+push own branch                    PASS
+push integration                   PASS
+stash push+pop                     PASS
+rebase onto origin                 PASS
+merge + reset own                  PASS
+clean own tree                     PASS
+status -C shared (read)            PASS
+fetch -C shared                    PASS
+
+== NEGATIVE (must all be blocked)
+write file in shared root          PASS(blocked)
+rm tracked file in shared          PASS(blocked)
+git -C shared commit               PASS(blocked)
+git -C shared reset --hard         PASS(blocked)
+git -C shared merge                PASS(blocked)
+git -C shared checkout -b          PASS(blocked)
+cd shared && commit                PASS(blocked)
+write into sibling wt2             PASS(blocked)
+git -C sibling wt2 commit          PASS(blocked)
+edit shared .git/config            PASS(blocked)
+edit shared .git/index             PASS(blocked)
+== KNOWN-RESIDUAL probes (documenting, not asserting)
+update-ref shared branch           PASS(blocked)
+worktree add from sandbox          PASS(blocked)
+
+== PROTECTED-BRANCH probe (deny main's loose ref + reflog on top of full carve-outs)
+own commit still works             PASS
+own push still works               PASS
+update-ref shared main             PASS(blocked)
+reset --soft moves shared main     PASS(blocked)
+branch -f shared main              PASS(blocked)

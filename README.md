@@ -43,6 +43,13 @@ branch-push + `gh pr create` in the same request and the lesson persists.
 `warden status` shows every repo's resolved lane and why. Design:
 `docs/superpowers/specs/2026-07-16-integration-lanes-design.md`.
 
+`warden remote add <name> <url>` configures a remote on the shared
+checkout through the same daemon: sessions can't write a shared
+`.git/config` (the denyWrite that blocks hook/credential-helper
+injection also blocks `git remote add`), so the daemon validates the
+request — adopted repo, plain remote name, https/ssh git URL only —
+and applies exactly `remote.<name>.url`, nothing else.
+
 ## Audit queries
 
 ```

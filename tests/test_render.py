@@ -103,5 +103,35 @@ class TestRender(unittest.TestCase):
         self.assertFalse(os.path.exists(settings + ".tmp"))
 
 
+    def test_gitconfig_rendered_per_repo(self):
+        repos = render.scan_repos([self.parent])
+        text = render.render_gitconfig(
+            repos, "/Library/Application Support/ClaudeCode")
+        self.assertIn('[includeIf "gitdir:%s/"]' % repos[0]["root"], text)
+        self.assertIn("\tpath = /Library/Application Support/ClaudeCode"
+                      "/warden/hookpath.gitconfig", text)
+        self.assertTrue(text.startswith("#"))  # do-not-edit header
+
+    def test_write_gitconfig_atomic(self):
+        settings = os.path.join(self.tmp.name, "ms.json")
+        registry = os.path.join(self.tmp.name, "reg.json")
+        gc = os.path.join(self.tmp.name, "warden.gitconfig")
+        p = subprocess.run(["python3", render.__file__, "--scan", self.parent,
+                            "--base", TEMPLATE, "--write-settings", settings,
+                            "--write-registry", registry,
+                            "--write-gitconfig", gc],
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("includeIf", open(gc).read())
+        self.assertFalse(os.path.exists(gc + ".tmp"))
+
+    def test_hookspath_override_detected(self):
+        repos = render.scan_repos([self.parent])
+        self.assertFalse(repos[0]["hookspath_override"])
+        subprocess.run(["git", "-C", repos[0]["root"], "config",
+                        "core.hooksPath", "/tmp/x"], check=True)
+        repos = render.scan_repos([self.parent])
+        self.assertTrue(repos[0]["hookspath_override"])
+
 if __name__ == "__main__":
     unittest.main()

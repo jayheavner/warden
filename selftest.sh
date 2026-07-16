@@ -153,6 +153,77 @@ else
   pass "T10 managed-settings.json append blocked"
 fi
 
+# T11: R1 — ref plumbing against a live sibling worktree's branch (no-op value)
+GITVER_OK=$(git --version | awk '{split($3,v,"."); print (v[1]>2 || (v[1]==2 && v[2]>=28)) ? 1 : 0}')
+INC_OK=0
+git config --file /etc/gitconfig --get-all include.path 2>/dev/null \
+  | grep -qxF "$WD/warden.gitconfig" && INC_OK=1
+if [ "$GITVER_OK" != 1 ] || [ "$INC_OK" != 1 ]; then
+  fail "T11 R1 NOT ENFORCED" "git>=2.28: $GITVER_OK, /etc/gitconfig include: $INC_OK"
+elif [ -n "$SIB" ] && [ -n "$OWN_WT" ]; then
+  SIBBR=$(git -C "$REPO" worktree list --porcelain | awk -v w="worktree $SIB" '
+    $0==w {f=1; next} f && index($0,"branch refs/heads/")==1 {print substr($0,19); exit} f && $0=="" {f=0}')
+  if [ -n "$SIBBR" ]; then
+    if git -C "$OWN_WT" update-ref "refs/heads/$SIBBR" "refs/heads/$SIBBR" >/dev/null 2>&1; then
+      fail "T11 R1 sibling-branch update-ref blocked" "SUCCEEDED (no-op value)"
+    else
+      pass "T11 R1 sibling-branch update-ref blocked"
+    fi
+  else
+    skip "T11 R1 sibling-branch probe" "sibling worktree is detached"
+  fi
+else
+  skip "T11 R1 sibling-branch probe" "no live sibling worktree or no worktree cwd"
+fi
+
+# T12: refresh daemon loaded and healthy
+if launchctl print system/com.warden.refresh >/dev/null 2>&1; then
+  if python3 -c '
+import datetime, json, sys
+h = json.load(open(sys.argv[1]))
+dt = datetime.datetime.fromisoformat(h["ts"])
+age = (datetime.datetime.now().astimezone() - dt).total_seconds()
+sys.exit(0 if h["ok"] and age < 86400 else 1)' "$WD/last-refresh.json" 2>/dev/null; then
+    pass "T12 refresh daemon loaded + healthy (<24h)"
+  else
+    fail "T12 refresh daemon loaded + healthy" "loaded but last-refresh.json stale/failed/missing"
+  fi
+else
+  fail "T12 refresh daemon loaded + healthy" "daemon not loaded"
+fi
+
+# T13: hook delivery chain visible from this session
+if [ "$INC_OK" = 1 ] && [ -f "$WD/warden.gitconfig" ] \
+   && [ -x "$WD/githooks/reference-transaction" ]; then
+  pass "T13 hook delivery chain present"
+else
+  fail "T13 hook delivery chain present" "include:$INC_OK rendered:$([ -f "$WD/warden.gitconfig" ] && echo 1 || echo 0)"
+fi
+
+# T14: every git a session might invoke is governed (>=2.28 + warden include)
+UNGOV=0; NGITS=0
+for g in /usr/bin/git /usr/local/bin/git /opt/homebrew/bin/git /opt/local/bin/git; do
+  [ -x "$g" ] || continue
+  NGITS=$((NGITS+1))
+  ver="$("$g" --version 2>/dev/null | awk '{print $3}')"
+  ok="$(printf '%s' "$ver" | awk -F. '{print ($1>2 || ($1==2 && $2>=28)) ? 1 : 0}')"
+  if [ "$ok" != 1 ]; then
+    fail "T14 git $g governed" "version $ver <2.28 — hook never runs"
+    UNGOV=1
+  elif ! "$g" config --system --get-all include.path 2>/dev/null | grep -qxF "$WD/warden.gitconfig"; then
+    fail "T14 git $g governed" "warden include absent from its system config"
+    UNGOV=1
+  fi
+done
+[ "$UNGOV" = 0 ] && pass "T14 all $NGITS git binaries governed"
+
+# T15: every adopted repo resolves to an integration lane with provenance
+if warden status 2>/dev/null | grep -q "lane "; then
+  pass "T15 lanes resolved for adopted repos"
+else
+  fail "T15 lanes resolved for adopted repos" "warden status shows no lane lines"
+fi
+
 echo
 echo "== result: $PASSN pass, $FAILN fail, $SKIPN skip"
 echo "== manual check remaining: ask this session to retry a blocked write with the"

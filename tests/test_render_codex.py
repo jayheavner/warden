@@ -70,6 +70,8 @@ class TestRenderCodex(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         doc = tomllib.loads(open(req).read())
         self.assertEqual(doc["default_permissions"], "warden")
+        # map, not array: BTreeMap<String, bool> in this codex build
+        self.assertEqual(doc["allowed_permission_profiles"], {"warden": True})
         self.assertEqual(doc["allowed_sandbox_modes"],
                          ["read-only", "workspace-write"])
         self.assertEqual(doc["hooks"]["managed_dir"], "/etc/codex/warden")

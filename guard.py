@@ -146,7 +146,9 @@ def main():
                 "additionalContext":
                     "warden enforcement is active: writes are limited to your "
                     "workspace (%s); shared checkouts and other sessions' "
-                    "worktrees are read-only." % scope}}))
+                    "worktrees are read-only. To integrate finished work, run "
+                    "`warden land <branch>` — a root daemon fast-forwards the "
+                    "shared HEAD branch; never ask the human to merge." % scope}}))
         elif event in ("WorktreeCreate", "WorktreeRemove"):
             _audit(dict(base, target=json.dumps(tin)[:300], verdict=event,
                         rule=""))

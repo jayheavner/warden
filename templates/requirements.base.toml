@@ -3,8 +3,13 @@
 # the rendered /etc/codex/requirements.toml.
 
 default_permissions = "warden"
-allowed_permission_profiles = ["warden"]
 allowed_sandbox_modes = ["read-only", "workspace-write"]
+
+# map form: this build's ConfigRequirementsToml is BTreeMap<String, bool>
+# (an array fails the whole requirements parse — proven 2026-07-16 via
+# configRequirements/read against the installed file)
+[allowed_permission_profiles]
+warden = true
 
 [features]
 hooks = true

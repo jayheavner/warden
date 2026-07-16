@@ -219,6 +219,14 @@ SessionStart announcement appeared.
 
 ## 4. Coverage deltas and residuals (beyond v1's R1–R7)
 
+- **R8 update (2026-07-16, post-install):** the probe did its job — the
+  first installed requirements.toml failed to parse (`configRequirements/read`
+  returned the parse error: `allowed_permission_profiles` is
+  `BTreeMap<String, bool>` in this build, not an array; confirmed against
+  codex-rs `config_requirements.rs`). Until re-rendered, the requirements
+  layer did not load and Codex enforcement was INACTIVE. Fixed in the base
+  template (map form); `warden status` now flags an unparseable installed
+  requirements.toml explicitly.
 - **R8 (new): profile-grammar drift.** The map-form filesystem grammar and
   `:workspace` extends are corroborated by binary structs + vendor docs but
   not yet executed on this machine. Bounded by: install-codex.sh validates

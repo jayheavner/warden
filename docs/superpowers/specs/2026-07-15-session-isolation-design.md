@@ -214,6 +214,10 @@ selftest (10 also by root ownership).
   shared checkout's own branch IS closed (protected trio). Mitigation:
   audit; optionally render protected trios for live worktree branches at
   refresh (closes it to within refresh lag) — v1.1 flag.
+  Update 2026-07-16: closed for the governed git path by the v1.1
+  reference-transaction hook — see 2026-07-16-v11-hardening-design.md §3
+  (the per-trio rendering idea was rejected there: it would break owner
+  commits).
 - **R2 root-cwd session may create NEW untracked top-level files at a shared
   root** (frozen zone covers tracked entries + `.git` + settings). Litter,
   not corruption: tracked state, index, HEAD, refs all denied. Next refresh
@@ -224,10 +228,14 @@ selftest (10 also by root ownership).
   a root-cwd session remain possible until v1.1 (per-command rendered denies
   or root-session Bash wrapping). Post-activation, root sessions are
   rare-by-force (they can't do normal work at the root). Audited meanwhile.
+  Update 2026-07-16: git-shaped lane closed by the v1.1 hook; arbitrary Bash
+  file writes remain audit-only — v1.1 design §6.
 - **R4 refresh lag.** A repo cloned after the last refresh has no denyWrite
   entries; its root working tree is unprotected against a root-cwd session in
   it until refresh. Worktree sessions are scope-limited regardless; the
   file-tool guard is lag-free. Bounded by the LaunchDaemon interval.
+  Update 2026-07-16: closed to seconds by the v1.1 WatchPaths daemon
+  (15-min fallback) — v1.1 design §2.
 - **R5 non-Claude processes** (Jay's own shells/tools) are out of scope by
   the problem statement.
 - **R6 pre-activation sessions** keep old behavior until restarted.

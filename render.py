@@ -37,8 +37,11 @@ def scan_repos(parents):
             rc, wt = _git(root, "worktree", "list", "--porcelain")
             worktrees = ([l.split(" ", 1)[1] for l in wt.splitlines()
                           if l.startswith("worktree ")][1:] if rc == 0 else [])
+            rc, _ = _git(root, "config", "--local", "--get",
+                         "core.hooksPath")
             repos.append({"root": root, "head_branch": head_branch,
-                          "top_entries": top_entries, "worktrees": worktrees})
+                          "top_entries": top_entries, "worktrees": worktrees,
+                          "hookspath_override": rc == 0})
     return repos
 
 
@@ -96,6 +99,17 @@ def render_codex_requirements(base_text, repos, managed_root):
     return "\n".join(lines) + "\n"
 
 
+def render_gitconfig(repos, managed_root):
+    """One includeIf stanza per adopted repo; trailing / on the gitdir
+    pattern matches the repo's .git and every linked worktree's gitdir."""
+    hookpath = managed_root + "/warden/hookpath.gitconfig"
+    lines = ["# rendered by warden render.py -- do not edit; sudo warden refresh"]
+    for r in repos:
+        lines += ['[includeIf "gitdir:%s/"]' % r["root"],
+                  "\tpath = %s" % hookpath]
+    return "\n".join(lines) + "\n"
+
+
 def _atomic_write(path, obj):
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
@@ -105,11 +119,12 @@ def _atomic_write(path, obj):
     os.replace(tmp, path)
 
 
-def _atomic_write_text(path, text, validate):
+def _atomic_write_text(path, text, validate=None):
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
         f.write(text)
-    validate(open(tmp).read())    # refuse to swap in unparseable output
+    if validate:
+        validate(open(tmp).read())  # refuse to swap in unparseable output
     os.replace(tmp, path)
 
 
@@ -121,6 +136,7 @@ def main(argv=None):
     ap.add_argument("--write-registry", required=True)
     ap.add_argument("--managed-root", default=None)
     ap.add_argument("--format", choices=["claude", "codex"], default="claude")
+    ap.add_argument("--write-gitconfig")
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args(argv)
     if a.managed_root is None:
@@ -148,10 +164,14 @@ def main(argv=None):
         return 0
     base = json.load(open(a.base))
     settings = render_settings(base, repos, a.managed_root)
+    gitconfig = render_gitconfig(repos, a.managed_root)
     if a.check:
-        print(json.dumps({"settings": settings, "registry": registry},
+        print(json.dumps({"settings": settings, "registry": registry,
+                          "gitconfig": gitconfig},
                          indent=2, sort_keys=True))
         return 0
+    if a.write_gitconfig:
+        _atomic_write_text(a.write_gitconfig, gitconfig)
     _atomic_write(a.write_settings, settings)
     _atomic_write(a.write_registry, registry)
     print("wrote %s (%d repos, %d denyWrite entries)" % (

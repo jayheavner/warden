@@ -231,6 +231,32 @@ SessionStart announcement appeared.
   session edits to it cannot lift enforcement; they can only break the
   session's own comfort settings. Audited via hook layer.
 
+## 4b. Integration lane: `warden land` (policy change, 2026-07-16)
+
+Jay's standing policy (recorded in memory): sessions must be able to land
+work on the shared HEAD branch with zero involvement from him — no remote,
+no PR flow, personal machine. v1 conflated "protect main from
+sibling/accidental mutation" with "gate integration"; only the former was
+ever wanted.
+
+Mechanism (session sandboxes still cannot write shared checkouts — that
+wall is untouched): a session runs `warden land [branch]`, which drops a
+JSON request into `/tmp/claude/warden-land/` (session-writable in both
+harnesses) and polls for the result. A root LaunchDaemon
+(`com.warden.landd`, WatchPaths + 60s interval) validates the request
+against the registry and fast-forwards the shared checkout's HEAD branch,
+running git demoted to the repo owner's uid so no root-owned files appear.
+ff-only: diverged requests are rejected with the fix (merge the HEAD branch
+into your branch in your own worktree, then re-land). Dirty shared
+checkouts (tracked changes) are refused. Every landing is logged via
+`logger -t warden` (E5).
+
+Trust model: any session can advance any adopted repo's HEAD branch to any
+existing local branch that fast-forwards it. That is the accepted policy on
+this machine, not a hole — corruption vectors (non-ff rewrites, dirty-tree
+clobbering, unregistered repos) remain closed, and sessions still cannot
+touch the checkout directly.
+
 ## 5. Build plan (TDD, mirroring 2026-07-16-warden-implementation.md)
 
 1. `tests/test_render_codex.py` — codex-format rendering: profile contains

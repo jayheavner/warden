@@ -15,7 +15,7 @@ out=$(./install-codex.sh 2>&1)
 echo "$out" | grep -q "must run as root" || fail "root-guard message"
 
 plan=$(./install-codex.sh --print-plan) || fail "--print-plan must work unprivileged"
-for f in guard.py codex_guard.py render.py codex-selftest uninstall-codex.sh requirements.base.toml; do
+for f in guard.py codex_guard.py render.py landd.py codex-selftest uninstall-codex.sh requirements.base.toml; do
   echo "$plan" | grep -q "$f" || fail "plan missing $f"
 done
 echo "$plan" | grep -q "/etc/codex" || fail "plan missing /etc/codex"

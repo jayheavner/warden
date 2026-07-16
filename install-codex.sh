@@ -11,7 +11,7 @@ WD="$DEST/warden"
 SCAN_HOME="${SUDO_USER:+/Users/$SUDO_USER}"
 SCAN_HOME="${SCAN_HOME:-$HOME}"
 SCAN_DIR="${WARDEN_SCAN_DIR:-$SCAN_HOME/claude}"
-FILES=(guard.py codex_guard.py render.py codex-selftest uninstall-codex.sh templates/requirements.base.toml)
+FILES=(guard.py codex_guard.py render.py landd.py codex-selftest uninstall-codex.sh templates/requirements.base.toml)
 
 if [ "${1:-}" = "--print-plan" ]; then
   printf 'would install to %s:\n' "$WD"
@@ -37,6 +37,21 @@ python3 "$WD/render.py" --format codex \
   --base "$WD/requirements.base.toml" \
   --write-settings "$DEST/requirements.toml" \
   --write-registry "$WD/registry.json"
+
+# landing daemon (shared with the Claude Code install; idempotent). The
+# plist runs landd.py from the ClaudeCode warden dir; create it if this is
+# a codex-only machine.
+LWD="/Library/Application Support/ClaudeCode/warden"
+mkdir -p "$LWD"
+install -m 0644 "$SRC/landd.py" "$LWD/landd.py"
+install -m 0644 "$SRC/templates/com.warden.landd.plist" \
+  /Library/LaunchDaemons/com.warden.landd.plist
+mkdir -p /tmp/claude/warden-land
+chmod 1777 /tmp/claude /tmp/claude/warden-land 2>/dev/null || true
+launchctl bootout system/com.warden.landd 2>/dev/null || true
+launchctl bootstrap system /Library/LaunchDaemons/com.warden.landd.plist
+chown root:wheel "$LWD" "$LWD/landd.py" \
+  /Library/LaunchDaemons/com.warden.landd.plist
 
 chown -R root:wheel "$DEST"
 chmod 0755 "$DEST" "$WD"

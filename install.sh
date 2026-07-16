@@ -11,12 +11,13 @@ WD="$DEST/warden"
 SCAN_HOME="${SUDO_USER:+/Users/$SUDO_USER}"
 SCAN_HOME="${SCAN_HOME:-$HOME}"
 SCAN_DIR="${WARDEN_SCAN_DIR:-$SCAN_HOME/claude}"
-FILES=(guard.py render.py selftest.sh uninstall.sh templates/managed-settings.base.json)
+FILES=(guard.py render.py landd.py selftest.sh uninstall.sh templates/managed-settings.base.json)
 
 if [ "${1:-}" = "--print-plan" ]; then
   printf 'would install to %s:\n' "$WD"
   printf '  %s\n' "${FILES[@]}"
   printf '  bin/warden -> /usr/local/bin/warden\n'
+  printf '  com.warden.landd.plist -> /Library/LaunchDaemons (landing daemon)\n'
   printf 'would render policy scanning: %s\n' "$SCAN_DIR"
   printf 'would write: %s/managed-settings.json and %s/registry.json\n' "$DEST" "$WD"
   exit 0
@@ -34,6 +35,14 @@ done
 chmod 0755 "$WD/selftest.sh" "$WD/uninstall.sh"
 mkdir -p /usr/local/bin
 install -m 0755 "$SRC/bin/warden" /usr/local/bin/warden
+
+# landing daemon: zero-tax `warden land` merges into shared HEAD branches
+install -m 0644 "$SRC/templates/com.warden.landd.plist" \
+  /Library/LaunchDaemons/com.warden.landd.plist
+mkdir -p /tmp/claude/warden-land
+chmod 1777 /tmp/claude /tmp/claude/warden-land 2>/dev/null || true
+launchctl bootout system/com.warden.landd 2>/dev/null || true
+launchctl bootstrap system /Library/LaunchDaemons/com.warden.landd.plist
 
 python3 "$WD/render.py" \
   --scan "$SCAN_DIR" \

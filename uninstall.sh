@@ -9,6 +9,8 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 DEST="/Library/Application Support/ClaudeCode"
+launchctl bootout system/com.warden.landd 2>/dev/null || true
+rm -f /Library/LaunchDaemons/com.warden.landd.plist
 rm -f "$DEST/managed-settings.json" /usr/local/bin/warden
 rm -rf "$DEST/warden"
 rmdir "$DEST" 2>/dev/null || true

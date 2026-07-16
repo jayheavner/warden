@@ -44,14 +44,23 @@ log show --last 1h --predicate 'sender == "Sandbox"'   # raw EPERM denials
 
 - R1: raw ref plumbing (`update-ref`) against a *sibling worktree's* branch is
   not FS-blockable (shared refs); the shared checkout's HEAD branch IS blocked.
-  Audited; v1.1 can render per-worktree protected refs.
+  **v1.1: closed for the governed git path** by a root-owned
+  `reference-transaction` hook delivered via `/etc/gitconfig` includeIf
+  (`docs/superpowers/specs/2026-07-16-v11-hardening-design.md` §3). Caveat:
+  enforcement covers the normal git path (git >=2.28 reading system config);
+  env-var, command-line, and pre-existing local `core.hooksPath` overrides
+  bypass it without an audit record.
 - R2: root-cwd sessions can create new untracked top-level files at a shared
   root (litter, not corruption).
 - R3: root-cwd sessions' Bash vs. live sibling worktrees — file tools are
-  guard-denied; Bash residual until v1.1. Root sessions can't do normal work
-  anyway (tracked tree frozen), so they are rare-by-force.
+  guard-denied. **v1.1: the git-shaped lane is closed** by the R1 hook;
+  arbitrary Bash file writes remain audit-only (v1.1 design §6). Root
+  sessions can't do normal work anyway (tracked tree frozen), so they are
+  rare-by-force.
 - R4: repos cloned after the last `sudo warden refresh` are unprotected against
-  root-cwd sessions in them until the next refresh.
+  root-cwd sessions in them until the next refresh. **v1.1: closed to
+  seconds** — a LaunchDaemon (`com.warden.refresh`, WatchPaths on the scan
+  dir + 15-min fallback interval) refreshes automatically (v1.1 design §2).
 - R5: non-Claude processes are out of scope (the constrained population is
   Claude Code sessions).
 - R6: sessions already running at install time bind on restart.
@@ -64,5 +73,7 @@ log show --last 1h --predicate 'sender == "Sandbox"'   # raw EPERM denials
 - `tests/lab/derive.sh` — seatbelt semantics lab proving the isolation model
   under git 2.22 and 2.50 (14 legitimate ops pass, 13 violations block);
   output kept in `tests/lab/EVIDENCE-2026-07-16.txt`.
-- `warden selftest` — activation-day acceptance suite (T1–T10), run inside a
+- `warden selftest` — activation-day acceptance suite (T1–T13), run inside a
   real fresh session.
+- `warden status` — daemon/refresh health, registry age, and hook-delivery
+  state at a glance.

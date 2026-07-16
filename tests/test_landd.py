@@ -454,6 +454,21 @@ class TestRemoteAdd(unittest.TestCase):
                              "origin"),
                          "https://github.com/jayheavner/warden.git")
 
+    def test_same_url_again_is_unchanged(self):
+        self.request()
+        res = self.request()
+        self.assertEqual(res["status"], "unchanged", res)
+
+    def test_different_url_updates_and_reports_previous(self):
+        self.request()
+        res = self.request(url="https://github.com/jayheavner/other.git")
+        self.assertEqual(res["status"], "remote-updated", res)
+        self.assertEqual(res["previous"],
+                         "https://github.com/jayheavner/warden.git")
+        self.assertEqual(out("git", "-C", self.repo, "remote", "get-url",
+                             "origin"),
+                         "https://github.com/jayheavner/other.git")
+
 
 if __name__ == "__main__":
     unittest.main()

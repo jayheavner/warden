@@ -320,6 +320,16 @@ def process_remote_request(req, registry, demote=True):
     if not REMOTE_URL_RE.match(url):
         return {"status": "rejected",
                 "reason": "invalid remote URL (https:// or ssh git URLs only)"}
+    rc, current, _ = _git(repo, "remote", "get-url", name, demote=demote)
+    if rc == 0 and current == url:
+        return {"status": "unchanged", "name": name, "url": url}
+    if rc == 0:
+        rc, _, err = _git(repo, "remote", "set-url", name, url, demote=demote)
+        if rc != 0:
+            return {"status": "rejected",
+                    "reason": "git remote set-url failed (%s)" % err[:200]}
+        return {"status": "remote-updated", "name": name, "url": url,
+                "previous": current}
     rc, _, err = _git(repo, "remote", "add", name, url, demote=demote)
     if rc != 0:
         return {"status": "rejected",

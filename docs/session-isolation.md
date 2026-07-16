@@ -2,7 +2,7 @@
 
 Date: 2026-07-15 (finalized 2026-07-16)
 Status: approved-for-build pending Jay's activation gate (§9)
-System name: **warden** — source at ~/claude/warden
+System name: **Warden** — source at ~/claude/warden
 
 ## 1. Problem (plain language)
 
@@ -215,7 +215,7 @@ selftest (10 also by root ownership).
   audit; optionally render protected trios for live worktree branches at
   refresh (closes it to within refresh lag) — v1.1 flag.
   Update 2026-07-16: closed for the governed git path by the v1.1
-  reference-transaction hook — see 2026-07-16-v11-hardening-design.md §3
+  reference-transaction hook — see v1.1-hardening.md §3
   (the per-trio rendering idea was rejected there: it would break owner
   commits).
 - **R2 root-cwd session may create NEW untracked top-level files at a shared
@@ -268,10 +268,10 @@ cd ~/claude/warden && sudo ./install.sh     # copies, chowns root, renders, veri
 ```
 
 Rollback: `sudo /Library/Application\ Support/ClaudeCode/warden/uninstall.sh`
-(or delete the managed-settings file) — restores exactly the pre-warden world.
+(or delete the managed-settings file) — restores exactly the pre-Warden world.
 
 Open gates for Jay: (G1) activate at all; (G2) LaunchDaemon auto-refresh
 on/off + interval; (G3) v1.1 hardening items (R1/R3 closure); (G4) whether
-warden gets a GitHub remote. Side finding to act on independently:
+Warden gets a GitHub remote. Side finding to act on independently:
 CLI OAuth is expired — headless/scheduled `claude` runs will fail until
 `claude login`.

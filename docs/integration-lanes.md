@@ -45,7 +45,7 @@ Lane resolution, first match wins:
    - any usable remote → `push`
 
 Rationale (requirements ruling, §12): the governing requirement is that
-warden never manufactures integration work for Jay. A repo wrongly
+Warden never manufactures integration work for Jay. A repo wrongly
 defaulted to `pr` produces a PR nobody required — which a human must then
 merge: tax, requirement violation. A repo wrongly defaulted to `push`
 against an actually-protected branch produces one refused push — harmless,
@@ -54,7 +54,7 @@ is `push` everywhere a remote exists, and resolution is **self-correcting
 in the only direction that matters**: a policy denial re-dispatches the
 same request down the `pr` lane and persists the lesson (§4); every later
 land in that repo goes straight to `pr`. The remote is the authority on
-its own rules; warden asks it by acting, not by probing protection APIs
+its own rules; Warden asks it by acting, not by probing protection APIs
 that need working auth.
 
 Accepted residual, stated plainly: a work repo where PRs are required by
@@ -83,7 +83,7 @@ verify** — then diverge only in their final act:
   Always safe under the invariant: *in remoted repos, the shared HEAD
   branch never holds commits origin doesn't have* (it only ever advances
   to SHAs the remote has already accepted). A non-ff sync means the
-  invariant was broken outside warden (force-push upstream, manual local
+  invariant was broken outside Warden (force-push upstream, manual local
   commits) → reject loudly with the state found; a human must look.
 - Verify: the session SHA must fast-forward from the synced tip; if not →
   reject: "merge <default-branch> in your worktree, then land again."
@@ -144,7 +144,7 @@ After the common prefix:
      (`gh pr view <branch> --json url`).
    - `gh` missing / token invalid / remote is not GitHub → status
      `branch-pushed`: the branch is on the remote and the result message
-     says exactly that plus what warden could not do and why. Landing
+     says exactly that plus what Warden could not do and why. Landing
      degrades to the largest step it can take, never to an error that
      undoes work.
 3. The shared HEAD branch is **never** advanced to the session SHA in this
@@ -159,7 +159,7 @@ to a given repo — that failure degrades to `branch-pushed`, and the
 message names the account that acted and the other accounts available on
 that host (fix: `gh auth switch`, or a future `account` key in
 `.warden.json`, reserved but unimplemented in v1). Every `pr`-lane result
-names the acting account, so warden never acts as an identity without
+names the acting account, so Warden never acts as an identity without
 saying which.
 
 Provenance: PRs are opened as Jay with `--fill`; no bot-disclosure footer
@@ -227,7 +227,7 @@ Known asymmetry (deliberate): lanes only ever *learn* toward `pr` — the
 pr lane's operations always succeed, so nothing ever observes "direct
 push would have been allowed." The escape hatches for this ratchet are
 `warden forget` (drop a wrong lesson) and declaration (override
-inference). This is the design's floor: warden never discovers push
+inference). This is the design's floor: Warden never discovers push
 permission by pushing somewhere it wasn't told or taught to.
 
 ## 5. Declared lanes
@@ -315,7 +315,7 @@ classifier fixtures, touching neither routing nor the invariant.
   policy denials; wrong lessons are one `warden forget` away.
 - **Every rejection carries its fix**, v1 discipline continued.
 - **Invariant violations reject loudly** rather than "helpfully"
-  repairing (warden never force-anythings a shared checkout).
+  repairing (Warden never force-anythings a shared checkout).
 
 ## 9. Testing
 
@@ -371,8 +371,8 @@ states the panel doubted, not the mechanisms the design likes.
 | Need (Jay, 2026-07-16) | Answered by |
 |---|---|
 | no repo gets PR ceremony unless its remote's rules or an explicit declaration require it (approved form, 2026-07-16 — replaces the categorical "personal projects never need PR", which fails when a project's shape changes) | the `pr` lane is reachable only by a remote's policy denial or a committed declaration; absent both, no-remote → `local` (network never touched; selftest asserts v1-identical behavior) and remoted → `push` (direct integration, no ceremony) |
-| work project, PR required | learned `pr` from the remote's own denial (protection), or declared when only conventional; warden pushes the branch and opens the PR itself |
-| work project, no PR required | inferred `push`; warden never manufactures a PR nobody required |
+| work project, PR required | learned `pr` from the remote's own denial (protection), or declared when only conventional; Warden pushes the branch and opens the PR itself |
+| work project, no PR required | inferred `push`; Warden never manufactures a PR nobody required |
 | branch protection varies | remote's own denials are the source of truth; lessons persist, `warden forget` corrects them |
 | zero involvement from Jay | every lane completes or degrades without a manual step; rejections name fixes addressed to the *session*, never to Jay |
 | elegance / no config tax | zero mandatory configuration; the only declaration case is convention-only PR repos (§2 residual) |
@@ -416,7 +416,7 @@ path when it lacks access). Lesson recorded: verify assumptions against
 the data model's capacity, not just its current contents.
 
 Requirements ruling (Jay, same day) → v3: the panel's org-remotes-default-
-to-`pr` narrowing violated the governing requirement — warden must never
+to-`pr` narrowing violated the governing requirement — Warden must never
 manufacture integration work for Jay, and an unrequired PR is exactly
 that (a human must merge it). Reverted: any remote infers `push`; the
 remote's policy denial is the sole automatic router to `pr`; declaration

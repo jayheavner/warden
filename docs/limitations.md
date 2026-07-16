@@ -1,38 +1,42 @@
-# Known limitations
+# Scope and limitations
 
-warden's threat model is narrow on purpose: the constrained population is
-Claude Code sessions running on one Mac, and the goal is to stop one session
-from writing outside its own worktree. The items below are the edges of that
-model. The full derivation lives in the design specs under
-[`docs/superpowers/specs/`](superpowers/specs/); this file is the short,
-current summary.
+Warden governs one specific population: Claude Code and Codex sessions running
+on one Mac, each in its own git worktree. Its job is to stop a session from
+writing outside that worktree. Everything below is a deliberate edge of that
+job, not a bug. The full derivation lives in
+[session-isolation.md](session-isolation.md); the Codex specifics are in
+[codex-port.md](codex-port.md).
 
-## Out of scope by design
+## What Warden does not govern
 
-- **Non-Claude processes.** Anything that isn't a Claude Code session is not
-  governed. warden constrains sessions, not the machine.
-- **Network egress.** warden governs filesystem writes, not the network. There
-  are no egress restrictions.
-- **Sessions already running at install (or refresh) time.** A session binds
-  its policy at startup. Restart running sessions after installing or after a
-  layout change so they pick up the current policy.
+- **Anything that isn't a governed agent session.** Your own shells, editors,
+  and tools are untouched. Warden constrains Claude Code and Codex sessions,
+  not the machine as a whole.
+- **The network.** Warden governs filesystem writes only. There are no egress
+  restrictions.
+- **Sessions started before installation or a policy change.** A session binds
+  its policy when it starts. After installing Warden — or after adding or
+  restructuring repos — restart any running sessions so they pick up the
+  current policy.
 
-## Narrow residual edges
+## Narrow edges within scope
 
-- **Raw git ref plumbing against a sibling worktree.** Shared refs aren't
-  filesystem-blockable, so `git update-ref` against another worktree's branch
-  can't be stopped at the sandbox layer. The shared checkout's own HEAD branch
-  *is* blocked. The governed git path is additionally covered by a root-owned
-  `reference-transaction` hook installed via `/etc/gitconfig`; that hook does
-  not fire when a session overrides `core.hooksPath` (via env var, command
-  line, or a pre-existing local setting).
-- **Root-cwd sessions.** A session started at a shared repo root has its
-  tracked tree frozen, so it can't do normal work there. It can still create
-  new untracked top-level files (litter, not corruption), and its arbitrary
-  Bash writes against live sibling worktrees are audit-only rather than blocked.
-  The git-shaped path is closed by the ref hook above.
-- **Newly cloned repos.** A repo cloned after the last refresh is unprotected
-  against root-cwd sessions until the next refresh. A LaunchDaemon
-  (`com.warden.refresh`) watches the scan directory and refreshes
-  automatically, with a 15-minute fallback interval, so this window is
-  normally seconds. Run `sudo warden refresh` to close it immediately.
+- **Raw git ref plumbing across worktrees.** Git refs are shared between a
+  repo and its worktrees, so they can't be protected by a per-path write rule.
+  The shared checkout's own branch is protected, and a machine-wide
+  `reference-transaction` hook refuses cross-worktree ref moves on the normal
+  git path. That hook does not fire if a session overrides `core.hooksPath`
+  (via an environment variable, a command-line flag, or a pre-existing local
+  git setting).
+
+- **Sessions whose working directory is a shared repo root.** Such a session
+  has its tracked tree frozen, so it can't do ordinary work there. It can
+  still create brand-new, untracked top-level files (litter, not corruption),
+  and its shell writes into a sibling worktree are recorded in the audit log
+  rather than blocked. The git-shaped version of that is closed by the ref
+  hook above.
+
+- **Freshly cloned repos.** A repo cloned since the last policy refresh isn't
+  protected against a root-directory session until the next refresh. A
+  background daemon watches for new repos and refreshes within seconds (with a
+  15-minute fallback), and `sudo warden refresh` closes the gap immediately.

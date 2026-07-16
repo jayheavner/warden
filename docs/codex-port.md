@@ -2,7 +2,7 @@
 
 Date: 2026-07-16
 Status: findings verified against the installed build; build plan below
-Parent: 2026-07-15-session-isolation-design.md (invariants I1–I3, capabilities
+Parent: session-isolation.md (invariants I1–I3, capabilities
 C1–C4, enforcement E1–E5, acceptance tests 1–10 apply verbatim)
 Target binary: `/Applications/ChatGPT.app/Contents/Resources/codex`,
 version **0.144.0-alpha.4** (confirmed live: `codex doctor` reads Jay's real
@@ -41,7 +41,7 @@ ritual assumed — codex-selftest re-checks in a fresh session.
 ### U2. Hook stdin/stdout JSON schema — extracted verbatim from the binary
 
 Full draft-07 JSON Schemas for every hook event are embedded in the binary
-and preserved at `docs/codex-evidence/hook-schemas-0.144.0-alpha.4.txt`.
+and preserved at `docs/codex-hook-schemas-0.144.0-alpha.4.txt`.
 
 PreToolUse **input** (stdin, one JSON object): snake_case, required fields
 `cwd`, `hook_event_name` ("PreToolUse"), `model`, `permission_mode`,
@@ -114,7 +114,7 @@ or a user-defined `[permissions.<id>]` profile"), `workspace_roots`,
 ("none" is a legacy alias). Special roots: `:project_roots`, `:tmpdir`,
 `:slash_tmp` (binary kinds: root, minimal, project_roots, subpath, tmpdir,
 slash_tmp). Precedence: deny > write > read, more-specific-wins — but as in
-v1, warden's deny set is disjoint from legitimate write paths except the
+v1, Warden's deny set is disjoint from legitimate write paths except the
 deliberate protected-branch trio inside the `.git/refs|logs` carve-outs,
 where deny-wins is guaranteed by both rules.
 
@@ -135,10 +135,10 @@ timeout = 30
 ```
 
 `allow_managed_hooks_only` stays **false** in v1 of the port: it would
-no-op Jay's own user/project hooks and plugins; warden's hooks are managed
+no-op Jay's own user/project hooks and plugins; Warden's hooks are managed
 (non-removable) either way. Revisit as a hardening flag.
 
-## 3. Architecture delta vs warden v1
+## 3. Architecture delta vs Warden v1
 
 Same three layers, new delivery surface. One scanner (`render.py`), two
 policy outputs.
@@ -149,7 +149,7 @@ policy outputs.
                                + allowed_* clamps + managed [hooks]
   warden/
     codex_guard.py         L2  Codex I/O adapter (new, thin)
-    guard.py               L2  classifier — byte-identical copy of warden v1's
+    guard.py               L2  classifier — byte-identical copy of Warden v1's
     registry.json          L3  same schema as v1's
     codex-selftest         L5  acceptance suite for Codex sessions
     uninstall-codex.sh         full rollback
@@ -163,7 +163,7 @@ On top, rendered from the same registry scan as v1:
 
 - write carve-outs per adopted repo (fixes upstream #14338/#15505 — sandboxed
   worktree sessions can't commit because shared `.git/worktrees/<name>` isn't
-  writable; warden's lab-proven set): `.git/objects/**`, `.git/refs/**`,
+  writable; Warden's lab-proven set): `.git/objects/**`, `.git/refs/**`,
   `.git/logs/**`, `.git/worktrees/**`, `.git/packed-refs`,
   `.git/packed-refs.lock`, `.git/FETCH_HEAD`.
 - deny frozen zone per repo (identical to v1's denyWrite): `.git/index`,
@@ -233,7 +233,7 @@ SessionStart announcement appeared.
   the rendered TOML parses (tomllib) and codex-selftest T1 fails loudly if
   the profile didn't take. This is the same tier-2→tier-3 ladder v1 used.
 - **R9 (new): deny-only hooks can't rewrite.** No updatedInput lane in this
-  build; fine — warden never rewrites.
+  build; fine — Warden never rewrites.
 - **R10 (new): `~/.codex/config.toml` remains user-writable** (out of
   problem-statement scope, R5) — but requirements outrank it by design, so
   session edits to it cannot lift enforcement; they can only break the
@@ -265,7 +265,7 @@ this machine, not a hole — corruption vectors (non-ff rewrites, dirty-tree
 clobbering, unregistered repos) remain closed, and sessions still cannot
 touch the checkout directly.
 
-## 5. Build plan (TDD, mirroring 2026-07-16-warden-implementation.md)
+## 5. Build plan (TDD, mirroring session-isolation-plan.md)
 
 1. `tests/test_render_codex.py` — codex-format rendering: profile contains
    carve-outs/denies per fixture repo, parses as TOML, `--check` writes

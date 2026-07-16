@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the warden enforcement system (guard hook, policy renderer, installer, selftest) per `docs/superpowers/specs/2026-07-15-session-isolation-design.md`, inert until Jay runs the sudo installer.
+**Goal:** Build the Warden enforcement system (guard hook, policy renderer, installer, selftest) per `docs/session-isolation.md`, inert until Jay runs the sudo installer.
 
 **Architecture:** Root-owned managed settings deliver a fail-closed native sandbox plus non-removable hooks. `guard.py` is a single stdlib-only python3 file: a pure-ish path classifier for file tools, audit for everything. `render.py` derives registry + denyWrite policy from disk truth. Bash enforcement comes from the native sandbox, never from parsing command text.
 
@@ -826,7 +826,7 @@ echo "   the Bash dangerouslyDisableSandbox parameter — it must STILL be block
 - Create: `README.md`
 - Copy: `tests/lab/derive.sh` (seatbelt regression lab from scratchpad, paths parameterized)
 
-- [ ] **Step 1: README.md** — what warden is (three sentences), install/rollback commands, the coverage table from the design doc, residual gaps R1–R7 verbatim, selftest instructions, audit-query one-liners (`log show --predicate 'process == "logger" && eventMessage CONTAINS "warden"' --last 1h`; `tail ~/.claude/warden/audit.jsonl`).
+- [ ] **Step 1: README.md** — what Warden is (three sentences), install/rollback commands, the coverage table from the design doc, residual gaps R1–R7 verbatim, selftest instructions, audit-query one-liners (`log show --predicate 'process == "logger" && eventMessage CONTAINS "warden"' --last 1h`; `tail ~/.claude/warden/audit.jsonl`).
 - [ ] **Step 2: Port derive.sh into tests/lab/ with LAB dir parameterized (`${WARDEN_LAB_DIR:-$(mktemp -d)}`), run it once, keep output as `tests/lab/EVIDENCE-2026-07-16.txt`.**
 - [ ] **Step 3: Run full suite** `python3 -m unittest discover -s tests -v && bash tests/test_install_dryrun.sh` — Expected: all PASS.
 - [ ] **Step 4: Commit** `git commit -am "docs: README, seatbelt evidence lab"`

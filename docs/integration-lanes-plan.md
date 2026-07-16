@@ -4,13 +4,13 @@
 
 **Goal:** Make `warden land` shape-aware: three lanes (`local`/`push`/`pr`) resolved per-repo as declared → learned → inferred, self-correcting from the remote's own policy denials.
 
-**Architecture:** A new pure-resolution module `lanes.py` (reads git config, `.warden.json` via `git show HEAD:`, `learned.json`; no mutation, no network). `landd.py` becomes the executor: it dispatches the resolved lane, classifies push failures, writes lessons, and routes policy denials into the pr lane. `bin/warden` grows `forget` and a lane column in `status`. Spec: `docs/superpowers/specs/2026-07-16-integration-lanes-design.md` (v3.2).
+**Architecture:** A new pure-resolution module `lanes.py` (reads git config, `.warden.json` via `git show HEAD:`, `learned.json`; no mutation, no network). `landd.py` becomes the executor: it dispatches the resolved lane, classifies push failures, writes lessons, and routes policy denials into the pr lane. `bin/warden` grows `forget` and a lane column in `status`. Spec: `docs/integration-lanes.md` (v3.2).
 
 **Tech Stack:** Python 3 stdlib only (repo convention), POSIX sh for `bin/warden`, `unittest` with offline bare-repo fixtures.
 
 ## Global Constraints
 
-- Requirements (approved 2026-07-16): no repo gets PR ceremony unless its remote's rules or an explicit declaration require it; never assume a remote exists; zero integration involvement from Jay; warden never manufactures integration work nothing required; gh is multi-profile — accounts are per-host sets, never a scalar.
+- Requirements (approved 2026-07-16): no repo gets PR ceremony unless its remote's rules or an explicit declaration require it; never assume a remote exists; zero integration involvement from Jay; Warden never manufactures integration work nothing required; gh is multi-profile — accounts are per-host sets, never a scalar.
 - Regression gate is literal: every test that exists in `tests/test_landd.py` before this plan must pass **unmodified**. New tests go in new test methods/files.
 - All tests run offline: `python3 -m unittest discover -s tests`.
 - Result statuses (spec §6): `landed`, `landed-remote-only`, `pr-opened`, `pr-exists`, `branch-pushed`, `rejected`. Every `rejected` reason names the fix, addressed to the session.

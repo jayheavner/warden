@@ -1,0 +1,3 @@
+# rendered target of warden includeIf stanzas -- do not edit
+[core]
+	hooksPath = /Library/Application Support/ClaudeCode/warden/githooks

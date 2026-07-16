@@ -18,5 +18,8 @@ for f in guard.py render.py selftest.sh uninstall.sh managed-settings.base.json;
   echo "$plan" | grep -q "$f" || fail "plan missing $f"
 done
 echo "$plan" | grep -q "/usr/local/bin/warden" || fail "plan missing warden CLI"
+echo "$plan" | grep -q "githooks" || fail "plan missing githooks"
+echo "$plan" | grep -q "com.warden.refresh.plist" || fail "plan missing daemon plist"
+echo "$plan" | grep -q "/etc/gitconfig include" || fail "plan missing gitconfig include"
 
 echo "install dry-run tests PASS"

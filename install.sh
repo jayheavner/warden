@@ -26,6 +26,15 @@ if [ "${1:-}" = "--print-plan" ]; then
   exit 0
 fi
 
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "warden install: macOS only." >&2
+  echo "  Enforcement is built on launchd, the macOS Seatbelt sandbox, and" >&2
+  echo "  /Library/Application Support/ClaudeCode — none of which exist here" >&2
+  echo "  ($(uname -s)). A Linux/Windows port is not a config flag; see the" >&2
+  echo "  design doc's platform scope. Aborting before any change is made." >&2
+  exit 1
+fi
+
 if [ "$(id -u)" -ne 0 ]; then
   echo "warden install: must run as root (sudo ./install.sh)" >&2
   exit 1

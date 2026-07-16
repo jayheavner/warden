@@ -158,6 +158,45 @@ try:
 except (OSError, ValueError):
     print("registry: missing")
 PY
+    # coverage probe: the renderer only adopts shared checkouts one level
+    # under a scan root (render.py scan_repos). Repos elsewhere are silently
+    # unprotected — surface that instead of leaving it quiet. Bounded walk;
+    # prunes adopted repos and heavy vendored trees to stay cheap.
+    python3 - "$WD/registry.json" <<'PY'
+import json, os, sys
+PRUNE = {".git", "node_modules", ".venv", "venv", "vendor", "__pycache__"}
+MAXDEPTH, CAP = 5, 10
+try:
+    reg = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    sys.exit(0)
+adopted = {os.path.realpath(r["root"]) for r in reg.get("repos", [])}
+if not adopted:
+    print("coverage: no repos adopted — check the scan dir (WARDEN_SCAN_DIR)")
+roots = [os.path.realpath(os.path.expanduser(s)) for s in reg.get("scanned", [])]
+missed = []
+for base in roots:
+    base_depth = base.rstrip("/").count("/")
+    for cur, dirs, _ in os.walk(base):
+        if cur.rstrip("/").count("/") - base_depth >= MAXDEPTH:
+            dirs[:] = []
+            continue
+        real = os.path.realpath(cur)
+        if real != base and os.path.isdir(os.path.join(cur, ".git")) \
+                and real not in adopted:
+            missed.append(real)          # a nested shared checkout we skip
+            dirs[:] = []                 # don't descend into its internals
+            continue
+        dirs[:] = [d for d in dirs if d not in PRUNE
+                   and os.path.realpath(os.path.join(cur, d)) not in adopted]
+if missed:
+    print("coverage: %d nested repo(s) NOT protected (only repos one level "
+          "under a scan root are adopted):" % len(missed))
+    for m in missed[:CAP]:
+        print("  " + m)
+    if len(missed) > CAP:
+        print("  ... and %d more" % (len(missed) - CAP))
+PY
     # multi-git governance probe: every git a session might invoke must have
     # the warden include resolvable in ITS system config chain (a Homebrew
     # git reads its own prefix's etc/gitconfig, not /etc/gitconfig).

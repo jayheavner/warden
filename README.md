@@ -30,7 +30,10 @@ renders the policy from your current repo layout, and verifies the result.
 Restart any Claude Code sessions that were already running — a session binds
 its policy at startup.
 
-To confirm enforcement is live, run `warden selftest` inside a fresh session.
+To confirm enforcement is live, start a fresh Claude Code session and ask it
+to run `warden selftest`. The test only works from inside a session's
+sandboxed shell, where warden is active — run in a plain terminal it detects
+that enforcement is off and exits without testing.
 
 ### Uninstall
 
@@ -42,7 +45,7 @@ sudo "/Library/Application Support/ClaudeCode/warden/uninstall.sh"
 
 ```sh
 warden status              # resolved lane per repo, daemon and refresh health
-warden selftest            # acceptance suite, run inside a fresh session
+warden selftest            # acceptance suite; ask a Claude Code session to run it
 sudo warden refresh        # re-derive policy after cloning or restructuring repos
 warden land <branch>       # integrate finished work (see Integration lanes)
 warden forget <repo>       # drop a learned integration lesson for a repo
@@ -96,7 +99,7 @@ log show --last 1h --predicate 'sender == "Sandbox"'   # raw sandbox denials
 
 ```sh
 python3 -m unittest discover -s tests   # unit suite: classifier, hook, renderer, lanes, daemon
-warden selftest                         # end-to-end acceptance suite, in a fresh session
+warden selftest                         # end-to-end acceptance suite; ask a Claude Code session to run it
 ```
 
 `tests/lab/` holds a seatbelt-semantics lab that proves the isolation model

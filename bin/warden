@@ -61,6 +61,33 @@ PY
       exit 1
     fi
     ;;
+  land)
+    # zero-tax integration: request the root landing daemon to fast-forward
+    # the shared checkout's HEAD branch to <branch> (default: current branch)
+    BRANCH="${2:-$(git branch --show-current)}"
+    [ -n "$BRANCH" ] || { echo "warden land: detached HEAD and no branch given" >&2; exit 2; }
+    COMMON=$(git rev-parse --git-common-dir) || exit 2
+    REPO=$(cd "$COMMON/.." && pwd -P)
+    Q="${WARDEN_LAND_QUEUE:-/tmp/claude/warden-land}"
+    mkdir -p "$Q"
+    REQ="$Q/land-$$-$(date +%s).json"
+    python3 - "$REQ" "$REPO" "$BRANCH" <<'EOF'
+import json, sys
+json.dump({"repo": sys.argv[2], "branch": sys.argv[3]}, open(sys.argv[1], "w"))
+EOF
+    echo "warden land: requested $BRANCH -> $(basename "$REPO") HEAD branch"
+    for _ in $(seq 1 90); do
+      if [ -f "$REQ.result" ]; then
+        STATUS=$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d["status"]);print(d.get("reason") or d.get("sha",""))' "$REQ.result")
+        rm -f "$REQ.result" 2>/dev/null || true
+        echo "$STATUS" | sed -n '1s/^/warden land: /p;2s/^/  /p'
+        [ "$(echo "$STATUS" | head -1)" = "landed" ] && exit 0 || exit 1
+      fi
+      sleep 1
+    done
+    echo "warden land: no response from landing daemon after 90s — is com.warden.landd loaded?" >&2
+    exit 1
+    ;;
   selftest)
     exec bash "$WD/selftest.sh"
     ;;
@@ -121,7 +148,7 @@ PY
     fi
     ;;
   *)
-    echo "usage: warden {refresh|selftest|status}" >&2
+    echo "usage: warden {refresh|land [branch]|selftest|status}" >&2
     exit 2
     ;;
 esac

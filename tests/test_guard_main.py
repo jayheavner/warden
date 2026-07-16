@@ -69,6 +69,7 @@ class TestMain(unittest.TestCase):
         self.assertEqual(out["hookEventName"], "SessionStart")
         self.assertIn("warden", out["additionalContext"])
         self.assertIn(self.wt, out["additionalContext"])
+        self.assertIn("warden land", out["additionalContext"])
 
     def test_worktree_create_touches_refresh_flag(self):
         home = os.path.join(self.tmp.name, "home")

@@ -65,14 +65,25 @@ rm "$T/main/.git/hooks/reference-transaction"
 WARDEN_AUDIT_FILE=/dev/null/nope git update-ref refs/heads/side HEAD 2>/dev/null \
   && fail "deny with broken audit" "succeeded" || pass "deny with broken audit"
 
-# 12: sentinel disables classification, chains repo hook, then regression (sentinel unset still denies)
+# 12: sentinel disables classification and still chains to repo-level hook
 printf '{"disabled_at":"x","by_uid":0}' > "$T/sentinel"
-WARDEN_SENTINEL="$T/sentinel" git update-ref refs/heads/side HEAD 2>"$T/err13"
-if [ "$(cat "$T/err13")" = "warden: disabled — ref protection off" ]; then
+rm -f "$T/marker"
+printf '#!/bin/bash\ncat >/dev/null\ntouch "%s/marker"\nexit 0\n' "$T" \
+  > "$T/main/.git/hooks/reference-transaction"; chmod +x "$T/main/.git/hooks/reference-transaction"
+if WARDEN_SENTINEL="$T/sentinel" git update-ref refs/heads/side HEAD 2>"$T/err12"; then
+  pass "sentinel: exit 0"
+else
+  fail "sentinel: exit 0" "nonzero exit"
+fi
+if [ "$(cat "$T/err12")" = "warden: disabled — ref protection off" ]; then
   pass "sentinel: exact notice"
 else
-  fail "sentinel: exact notice" "$(cat "$T/err13")"
+  fail "sentinel: exact notice" "$(cat "$T/err12")"
 fi
+[ -f "$T/marker" ] && pass "sentinel: chains to repo hook" || fail "sentinel: chains to repo hook" "marker missing"
+rm -f "$T/main/.git/hooks/reference-transaction" "$T/marker"
+
+# 13: regression — sentinel unset still denies
 git update-ref refs/heads/side HEAD~1 2>/dev/null
 git update-ref refs/heads/side HEAD 2>/dev/null && fail "sentinel: regression still denies" "succeeded" || pass "sentinel: regression still denies"
 rm -f "$T/sentinel"

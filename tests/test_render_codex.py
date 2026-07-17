@@ -36,7 +36,7 @@ class TestRenderCodex(unittest.TestCase):
         fs = doc["permissions"]["warden"]["filesystem"]
         root = os.path.realpath(self.repo)
         b = repos[0]["head_branch"]
-        # frozen zone denied
+        # frozen zone read-only (codex "deny" is total no-access)
         for frozen in [root + "/.git/index", root + "/.git/HEAD",
                        root + "/.git/config", root + "/.git/hooks/**",
                        root + "/.git/info/**",
@@ -47,7 +47,7 @@ class TestRenderCodex(unittest.TestCase):
                        root + "/.claude/settings.json",
                        root + "/.codex/**",
                        "/etc/codex/**"]:
-            self.assertEqual(fs[frozen], "deny", frozen)
+            self.assertEqual(fs[frozen], "read", frozen)
         # shared-.git carve-outs writable (upstream worktree-commit bug fix)
         for carve in [root + "/.git/objects/**", root + "/.git/refs/**",
                       root + "/.git/logs/**", root + "/.git/worktrees/**",
@@ -92,7 +92,7 @@ class TestRenderCodex(unittest.TestCase):
                            capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stderr)
         rules = tomllib.loads(p.stdout)["permissions"]["warden"]["filesystem"]
-        self.assertEqual(list(rules.values()), ["deny"])
+        self.assertEqual(list(rules.values()), ["read"])
         (path,) = rules.keys()
         self.assertTrue(path.endswith("/**"))
 
@@ -120,7 +120,7 @@ class TestCodexHomeCarveouts(unittest.TestCase):
         self.assertEqual(rules["/Users/u/.cache/**"], "write")
         self.assertEqual(rules["/Users/u/.codex/**"], "write")
         # tamper surface stays closed inside the ~/.codex grant
-        self.assertEqual(rules["/Users/u/.codex/config.toml"], "deny")
+        self.assertEqual(rules["/Users/u/.codex/config.toml"], "read")
 
     def test_no_home_no_carveouts(self):
         rules = render.codex_fs_rules([], "/etc/codex")

@@ -99,7 +99,7 @@ CODEX_GIT_CARVEOUTS = ["objects/**", "refs/**", "logs/**", "worktrees/**",
 # session state, and caches. ~/.codex stays writable for session state,
 # but its config is a tamper surface and stays denied.
 CODEX_HOME_CARVEOUTS = {
-    ".codex/**": "write", ".codex/config.toml": "deny",
+    ".codex/**": "write", ".codex/config.toml": "read",
     ".azure/**": "write", ".aws/**": "write", ".config/**": "write",
     ".cache/**": "write", ".local/**": "write",
     "Library/Caches/**": "write", "Library/Logs/**": "write",
@@ -107,7 +107,14 @@ CODEX_HOME_CARVEOUTS = {
 
 
 def codex_fs_rules(repos, managed_root, home=None, disabled=False):
-    rules = {managed_root.rstrip("/") + "/**": "deny"}
+    # "read" everywhere warden means read-only-not-writable: in the codex
+    # access enum (read | write | deny) "deny" is TOTAL no-access — it
+    # blocked reading the shared checkout's files, .git refs, and even
+    # warden's own selftest under /etc/codex (proven live 2026-07-17,
+    # exit 126 / Operation not permitted from a governed session).
+    # Precedence is more-specific-wins, so a "read" on a protected path
+    # still overrides a broader "write" carve-out.
+    rules = {managed_root.rstrip("/") + "/**": "read"}
     if disabled:
         return rules
     if home:
@@ -119,16 +126,16 @@ def codex_fs_rules(repos, managed_root, home=None, disabled=False):
         for c in CODEX_GIT_CARVEOUTS:
             rules[root + "/.git/" + c] = "write"
         for f in ["index", "HEAD", "config", "hooks/**", "info/**"]:
-            rules[root + "/.git/" + f] = "deny"
+            rules[root + "/.git/" + f] = "read"
         if r["head_branch"]:
             ref = root + "/.git/refs/heads/" + r["head_branch"]
             for f in [ref, ref + ".lock",
                       root + "/.git/logs/refs/heads/" + r["head_branch"]]:
-                rules[f] = "deny"
+                rules[f] = "read"
         for entry in r["top_entries"]:
-            rules[root + "/" + entry] = "deny"
-        rules[root + "/.claude/settings.json"] = "deny"
-        rules[root + "/.codex/**"] = "deny"
+            rules[root + "/" + entry] = "read"
+        rules[root + "/.claude/settings.json"] = "read"
+        rules[root + "/.codex/**"] = "read"
     return rules
 
 

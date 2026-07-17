@@ -55,21 +55,37 @@ class TestRender(unittest.TestCase):
         base = {"sandbox": {"filesystem": {"denyWrite": []}}}
         out = render.render_settings(base, repos,
                                      "/Library/Application Support/ClaudeCode")
-        deny = out["sandbox"]["filesystem"]["denyWrite"]
+        fs = out["sandbox"]["filesystem"]
+        deny, allow = fs["denyWrite"], fs["allowWrite"]
         root = os.path.realpath(self.repo)
         b = repos[0]["head_branch"]
-        for want in [root + "/.git/index", root + "/.git/HEAD",
-                     root + "/.git/config", root + "/.git/hooks",
-                     root + "/.git/info",
+        # one deny freezes the whole shared checkout; the branch trio
+        # re-closes the shared HEAD branch inside the .git allows
+        for want in [root,
                      root + "/.git/refs/heads/" + b,
                      root + "/.git/refs/heads/" + b + ".lock",
                      root + "/.git/logs/refs/heads/" + b,
-                     root + "/README.md", root + "/docs",
-                     root + "/.claude/settings.json",
                      "/Library/Application Support/ClaudeCode"]:
             self.assertIn(want, deny)
-        self.assertNotIn(root + "/.claude/worktrees", deny)
-        self.assertNotIn(root, deny)
+        # per-file entries are gone — they blew the profile past ARG_MAX
+        self.assertNotIn(root + "/README.md", deny)
+        self.assertNotIn(root + "/.git/index", deny)
+        # worktree git ops need these shared-.git subtrees
+        for sub in ["objects", "refs", "logs", "worktrees"]:
+            self.assertIn(root + "/.git/" + sub, allow)
+        # sibling worktrees must stay read-only: no blanket worktree allow
+        self.assertNotIn(root + "/.claude/worktrees", allow)
+
+    def test_fs_rule_ceiling(self):
+        repos = render.scan_repos([self.parent])
+        base = {"sandbox": {"filesystem": {"denyWrite": []}}}
+        os.environ["WARDEN_MAX_FS_RULES"] = "3"
+        try:
+            with self.assertRaises(SystemExit):
+                render.render_settings(base, repos,
+                                       "/Library/Application Support/ClaudeCode")
+        finally:
+            del os.environ["WARDEN_MAX_FS_RULES"]
 
     def test_allowwrite_carveouts_preserved(self):
         # the base template's home carve-outs (agent CLIs, global memory,

@@ -97,7 +97,10 @@ PY
     userfallback --disabled || rollback
     CWD_CODEX="${WARDEN_CODEX_DEST:-/etc/codex}/warden"
     if [ -d "$CWD_CODEX" ]; then
-      python3 "$CWD_CODEX/render.py" --format codex --disabled \
+      # prefer warden's own renderer over the codex copy: a stale codex
+      # install must not be able to block the machine-wide failsafe
+      RENDER="$WD/render.py"; [ -f "$RENDER" ] || RENDER="$CWD_CODEX/render.py"
+      python3 "$RENDER" --format codex --disabled \
         --scan "${WARDEN_SCAN_DIR:-$SCAN_HOME/claude}" \
         --base "$CWD_CODEX/requirements.base.toml" \
         --write-settings "${WARDEN_CODEX_DEST:-/etc/codex}/requirements.toml" \
@@ -204,7 +207,8 @@ PY
     # codex harness: refresh /etc/codex policy if installed
     CWD_CODEX="${WARDEN_CODEX_DEST:-/etc/codex}/warden"
     if [ -d "$CWD_CODEX" ]; then
-      python3 "$CWD_CODEX/render.py" --format codex \
+      RENDER="$WD/render.py"; [ -f "$RENDER" ] || RENDER="$CWD_CODEX/render.py"
+      python3 "$RENDER" --format codex \
         --scan "${WARDEN_SCAN_DIR:-$SCAN_HOME/claude}" \
         --base "$CWD_CODEX/requirements.base.toml" \
         --write-settings "${WARDEN_CODEX_DEST:-/etc/codex}/requirements.toml" \

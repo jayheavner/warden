@@ -45,24 +45,50 @@ def scan_repos(parents):
     return repos
 
 
+# shared-.git subpaths a worktree session legitimately writes (commits,
+# fetches, ref updates, packing). Everything else under a repo root is
+# frozen by the root-level deny; sandbox filesystem rules resolve by
+# most-specific-path-wins, so these allows re-open only these subtrees
+# and the branch-trio denies re-close the shared HEAD branch inside them.
+GIT_WRITE_SUBPATHS = ["objects", "refs", "logs", "worktrees",
+                      "packed-refs", "packed-refs.lock", "FETCH_HEAD"]
+
+# ceiling on rendered filesystem rules: the generated sandbox profile is
+# passed as a single exec argument, and past roughly this many rules it
+# exceeds the OS ARG_MAX limit and every Bash spawn fails with E2BIG
+MAX_FS_RULES_DEFAULT = 250
+
+
 def render_settings(base, repos, managed_root):
     out = json.loads(json.dumps(base))
-    deny = (out.setdefault("sandbox", {})
-               .setdefault("filesystem", {})
-               .setdefault("denyWrite", []))
+    fs = out.setdefault("sandbox", {}).setdefault("filesystem", {})
+    deny = fs.setdefault("denyWrite", [])
+    allow = fs.setdefault("allowWrite", [])
     deny.append(managed_root)
     for r in repos:
         root = r["root"]
-        deny += [root + "/.git/index", root + "/.git/HEAD",
-                 root + "/.git/config", root + "/.git/hooks",
-                 root + "/.git/info", root + "/.claude/settings.json"]
+        # one deny per repo root freezes the whole shared checkout —
+        # tracked tree, .git identity, .claude/settings.json. A session's
+        # own worktree stays writable because its cwd is more specific.
+        # No allow for .claude/worktrees: sibling worktrees must stay
+        # read-only, and worktree creation is app-side (unsandboxed).
+        deny.append(root)
+        allow += [root + "/.git/" + p for p in GIT_WRITE_SUBPATHS]
         if r["head_branch"]:
             ref = root + "/.git/refs/heads/" + r["head_branch"]
             deny += [ref, ref + ".lock",
                      root + "/.git/logs/refs/heads/" + r["head_branch"]]
-        for entry in r["top_entries"]:
-            deny.append(root + "/" + entry)
-    out["sandbox"]["filesystem"]["denyWrite"] = sorted(set(deny))
+    fs["denyWrite"] = sorted(set(deny))
+    fs["allowWrite"] = sorted(set(allow))
+    limit = int(os.environ.get("WARDEN_MAX_FS_RULES", MAX_FS_RULES_DEFAULT))
+    total = len(fs["denyWrite"]) + len(fs["allowWrite"])
+    if total > limit:
+        raise SystemExit(
+            "render: %d filesystem rules exceed the safe limit of %d — a "
+            "profile this large fails every Bash spawn with E2BIG. Reduce "
+            "the repos under the scan dir(s) or raise WARDEN_MAX_FS_RULES "
+            "only if a live session has proven the larger profile execs."
+            % (total, limit))
     return out
 
 

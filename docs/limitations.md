@@ -73,6 +73,18 @@ job, not a bug. The full derivation lives in
   restarts. See [the disable failsafe](disable-failsafe.md) for the full
   design.
 
+- **Profile size is a hard budget.** The sandbox profile is passed to every
+  Bash spawn as one exec argument; past roughly 400 filesystem rules it
+  exceeds the OS argument limit and **every shell command in every governed
+  session fails to start** (observed 2026-07-17 at 18 repos under the old
+  per-file rendering). The renderer now emits one deny per repo root plus a
+  handful of shared-`.git` allows (most-specific-path-wins semantics), and
+  refuses to render more than `WARDEN_MAX_FS_RULES` (default 250) rules.
+  If a refresh hits that ceiling, thin out the scan directory rather than
+  raising the ceiling blind. Root-cwd sessions can no longer run
+  `git worktree add` inside the sandbox (worktree creation is app-side);
+  that lane was traded for keeping sibling worktrees read-only.
+
 - **Freshly cloned repos.** A repo cloned since the last policy refresh isn't
   protected against a root-directory session until the next refresh. A
   background daemon watches for new repos and refreshes within seconds (with a

@@ -71,6 +71,22 @@ class TestRender(unittest.TestCase):
         self.assertNotIn(root + "/.claude/worktrees", deny)
         self.assertNotIn(root, deny)
 
+    def test_allowwrite_carveouts_preserved(self):
+        # the base template's home carve-outs (agent CLIs, global memory,
+        # caches) must pass through the render untouched
+        repos = render.scan_repos([self.parent])
+        tpl = os.path.join(os.path.dirname(__file__), "..",
+                           "templates", "managed-settings.base.json")
+        base = json.load(open(tpl))
+        out = render.render_settings(base, repos,
+                                     "/Library/Application Support/ClaudeCode")
+        allow = out["sandbox"]["filesystem"]["allowWrite"]
+        for want in ["~/.claude", "~/.azure", "~/.config", "~/.cache"]:
+            self.assertIn(want, allow)
+        deny = out["sandbox"]["filesystem"]["denyWrite"]
+        self.assertIn("~/.claude/settings.json", deny)
+        self.assertIn("~/.claude/settings.local.json", deny)
+
     def test_check_mode_writes_nothing(self):
         settings = os.path.join(self.tmp.name, "ms.json")
         registry = os.path.join(self.tmp.name, "reg.json")

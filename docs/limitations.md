@@ -13,7 +13,20 @@ job, not a bug. The full derivation lives in
   and tools are untouched. Warden constrains Claude Code and Codex sessions,
   not the machine as a whole.
 - **The network.** Warden governs filesystem writes only. There are no egress
-  restrictions.
+  restrictions from Warden itself, but the native sandbox it enables applies
+  Claude Code's own per-domain network approval flow; a headless or
+  non-interactive session may see network commands fail rather than prompt.
+- **The rest of the home directory — mostly.** The native sandbox's default
+  write scope is the session's working directory plus temp. That default is
+  broader than Warden's job (confine the projects, not the machine), so the
+  base template grants `allowWrite` carve-outs for the directories agent
+  tooling legitimately writes: `~/.claude` (global memory, audit, plugins;
+  its `settings.json` stays denied), `~/.claude.json`, `~/.azure`, `~/.aws`,
+  `~/.config`, `~/.cache`, `~/.local`, `~/Library/Caches`, `~/Library/Logs`.
+  Extend the list in `templates/managed-settings.base.json` and run
+  `sudo warden refresh` if a CLI you use writes somewhere else. Selftest T17
+  asserts the carve-outs are live. (The Codex port does not yet mirror these
+  carve-outs.)
 - **Sessions started before installation or a policy change.** A session binds
   its policy when it starts. After installing Warden — or after adding or
   restructuring repos — restart any running sessions so they pick up the

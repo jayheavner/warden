@@ -240,6 +240,21 @@ else
   fail "T16 user-settings fallback delivered" "run: sudo warden refresh (Enterprise override would leave claude ungoverned)"
 fi
 
+# T17: home carve-outs writable (agent CLIs, global memory, caches) — the
+# sandbox must confine the projects, not the whole home directory
+CO="$HOME/.cache/warden-selftest-$$"
+if touch "$CO" 2>/dev/null; then
+  rm -f "$CO"; pass "T17 home carve-out (~/.cache) writable"
+else
+  fail "T17 home carve-out (~/.cache) writable" "sandbox is over-blocking; check allowWrite in the rendered settings"
+fi
+CO="$HOME/.claude/warden/selftest-write-$$"
+if touch "$CO" 2>/dev/null; then
+  rm -f "$CO"; pass "T17b home carve-out (~/.claude) writable"
+else
+  fail "T17b home carve-out (~/.claude) writable" "global memory and audit writes would be blocked"
+fi
+
 # T15: every adopted repo resolves to an integration lane with provenance
 if warden status 2>/dev/null | grep -q "lane "; then
   pass "T15 lanes resolved for adopted repos"

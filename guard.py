@@ -122,6 +122,37 @@ def classify(target, session_cwd, managed_root=MANAGED_ROOT_DEFAULT):
         "creates one per session)." % (t, repo_t))
 
 
+def registry_roots(managed_root=MANAGED_ROOT_DEFAULT):
+    """Adopted shared-checkout roots from the rendered registry. Any
+    anomaly reads as an empty list (fail open: audit-only Bash)."""
+    p = (os.environ.get("WARDEN_REGISTRY")
+         or os.path.join(managed_root, "warden", "registry.json"))
+    try:
+        return [r["root"] for r in json.load(open(p))["repos"]]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+
+
+def classify_bash(session_cwd, managed_root=MANAGED_ROOT_DEFAULT):
+    """Structural judgment for Bash: a session whose cwd is inside an
+    adopted shared checkout (and not inside a worktree) must not run shell
+    commands at all — the sandbox cannot freeze the tracked tree without
+    blowing the profile past ARG_MAX, so the tree wall for root-cwd
+    sessions is this denial. Command text is never parsed."""
+    cwd = _resolve(session_cwd)
+    if worktree_container(cwd):
+        return Verdict("none", "", "")
+    root = shared_root(cwd)
+    if root and root in registry_roots(managed_root):
+        return Verdict(
+            "deny", "I4",
+            "warden I4: this session's working directory is inside the "
+            "shared checkout %s, which is read-only to every session. "
+            "Create or enter a worktree (EnterWorktree) and work there; "
+            "shell commands are denied at shared checkouts." % root)
+    return Verdict("none", "", "")
+
+
 FILE_TOOLS = {"Edit": "file_path", "Write": "file_path",
               "NotebookEdit": "notebook_path"}
 
@@ -185,8 +216,12 @@ def main():
                             verdict="disabled-audit", rule=""))
                 _notify_once(sid, since)
             else:
+                v = classify_bash(cwd)
                 _audit(dict(base, target=(tin.get("command") or "")[:500],
-                            verdict="audit", rule=""))
+                            verdict=v.decision if v.decision == "deny"
+                            else "audit", rule=v.rule))
+                if v.decision == "deny":
+                    _deny(event, v.reason)
         elif event == "SessionStart":
             rcwd = _resolve(cwd)
             wt = worktree_container(rcwd)

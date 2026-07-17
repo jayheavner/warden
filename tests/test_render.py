@@ -55,26 +55,25 @@ class TestRender(unittest.TestCase):
         base = {"sandbox": {"filesystem": {"denyWrite": []}}}
         out = render.render_settings(base, repos,
                                      "/Library/Application Support/ClaudeCode")
-        fs = out["sandbox"]["filesystem"]
-        deny, allow = fs["denyWrite"], fs["allowWrite"]
+        deny = out["sandbox"]["filesystem"]["denyWrite"]
         root = os.path.realpath(self.repo)
         b = repos[0]["head_branch"]
-        # one deny freezes the whole shared checkout; the branch trio
-        # re-closes the shared HEAD branch inside the .git allows
-        for want in [root,
+        # git tamper surfaces + branch trio + enforcement config only
+        for want in [root + "/.git/index", root + "/.git/HEAD",
+                     root + "/.git/config", root + "/.git/hooks",
+                     root + "/.git/info",
                      root + "/.git/refs/heads/" + b,
                      root + "/.git/refs/heads/" + b + ".lock",
                      root + "/.git/logs/refs/heads/" + b,
+                     root + "/.claude/settings.json",
                      "/Library/Application Support/ClaudeCode"]:
             self.assertIn(want, deny)
-        # per-file entries are gone — they blew the profile past ARG_MAX
+        # no tracked-tree enumeration (E2BIG) and no root-level deny
+        # (a write deny beats every allow beneath it — it would freeze
+        # the repo's worktrees and their shared-.git writes)
+        self.assertNotIn(root, deny)
         self.assertNotIn(root + "/README.md", deny)
-        self.assertNotIn(root + "/.git/index", deny)
-        # worktree git ops need these shared-.git subtrees
-        for sub in ["objects", "refs", "logs", "worktrees"]:
-            self.assertIn(root + "/.git/" + sub, allow)
-        # sibling worktrees must stay read-only: no blanket worktree allow
-        self.assertNotIn(root + "/.claude/worktrees", allow)
+        self.assertNotIn(root + "/docs", deny)
 
     def test_fs_rule_ceiling(self):
         repos = render.scan_repos([self.parent])

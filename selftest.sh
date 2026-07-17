@@ -3,6 +3,17 @@
 # (ask the session to run: warden selftest). Non-destructive against real
 # repos; every verdict comes from filesystem truth. Maps to the acceptance
 # tests in the design doc (T1-T10).
+#
+# Heredocs need a writable temp dir. Inside a governed session /tmp is
+# outside the sandbox's write scope, so fall back to the ~/.claude
+# carve-out — otherwise every heredoc-backed check crashes before testing
+# anything and reports a false FAIL.
+if ! ( : > "${TMPDIR:-/tmp}/.warden-tmpprobe.$$" ) 2>/dev/null; then
+  export TMPDIR="$HOME/.claude/warden/tmp"
+  mkdir -p "$TMPDIR"
+else
+  rm -f "${TMPDIR:-/tmp}/.warden-tmpprobe.$$"
+fi
 set -u
 WD="/Library/Application Support/ClaudeCode/warden"
 REG="$WD/registry.json"

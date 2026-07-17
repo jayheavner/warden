@@ -5,6 +5,16 @@ DEST="${WARDEN_DEST:-/Library/Application Support/ClaudeCode}"
 WD="$DEST/warden"
 DAEMON_LABEL="com.warden.refresh"
 
+# Heredocs need a writable temp dir. Inside a governed session /tmp is
+# outside the sandbox's write scope, so fall back to the ~/.claude
+# carve-out — otherwise status/verify heredocs crash and report falsely.
+if ! ( : > "${TMPDIR:-/tmp}/.warden-tmpprobe.$$" ) 2>/dev/null; then
+  export TMPDIR="$HOME/.claude/warden/tmp"
+  mkdir -p "$TMPDIR" 2>/dev/null || true
+else
+  rm -f "${TMPDIR:-/tmp}/.warden-tmpprobe.$$"
+fi
+
 health() {  # health <ok|fail> <registry+settings paths | error text>
   python3 - "$WD/last-refresh.json" "$@" <<'PY'
 import datetime, json, os, sys

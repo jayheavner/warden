@@ -51,11 +51,15 @@ job, not a bug. The full derivation lives in
   git setting).
 
 - **Sessions whose working directory is a shared repo root.** Such a session
-  has its tracked tree frozen, so it can't do ordinary work there; it gets a
-  session-start warning telling it to enter a worktree. It can still create
-  brand-new, untracked top-level files (litter, not corruption), and its
-  shell writes into a sibling worktree are recorded in the audit log rather
-  than blocked. The git-shaped version of that is closed by the ref hook
+  gets a session-start warning telling it to enter a worktree, and the
+  guard's I4 rule denies every Bash command it issues (file tools were
+  already denied by I2) until it moves into a worktree. I4 is scoped to
+  *adopted* repos (the rendered registry), so it inherits the registry's
+  refresh lag, and it reads the session's cwd — a session whose cwd is an
+  *ancestor* of the repos (e.g. the scan directory itself) can still
+  shell-write tracked files, though it cannot commit them or move refs
+  (tamper surfaces frozen; every write audited). The git-shaped version is
+  closed by the ref hook
   above, whose R2 rule also refuses agent-session moves or deletes of any
   existing branch at a shared checkout root — including from headless or
   pre-install sessions the Bash sandbox never bound to, since the hook rides
@@ -77,13 +81,20 @@ job, not a bug. The full derivation lives in
   Bash spawn as one exec argument; past roughly 400 filesystem rules it
   exceeds the OS argument limit and **every shell command in every governed
   session fails to start** (observed 2026-07-17 at 18 repos under the old
-  per-file rendering). The renderer now emits one deny per repo root plus a
-  handful of shared-`.git` allows (most-specific-path-wins semantics), and
-  refuses to render more than `WARDEN_MAX_FS_RULES` (default 250) rules.
-  If a refresh hits that ceiling, thin out the scan directory rather than
-  raising the ceiling blind. Root-cwd sessions can no longer run
-  `git worktree add` inside the sandbox (worktree creation is app-side);
-  that lane was traded for keeping sibling worktrees read-only.
+  per-file rendering). Two facts constrain the fix: the tracked tree cannot
+  be enumerated per-file (that is the E2BIG blowup), and it cannot be
+  frozen with one repo-root deny either — **a write deny always beats any
+  allow beneath it** (empirically proven the same day; the docs'
+  most-specific-path-wins language applies to read rules only), so a root
+  deny freezes the repo's own worktrees and the shared-`.git` writes their
+  commits need. The renderer therefore denies only the git tamper surfaces
+  per repo (`.git/index`, `HEAD`, `config`, `hooks`, `info`, the HEAD-branch
+  ref trio, `.claude/settings.json`), and the guard's I4 rule denies all
+  Bash in sessions whose cwd is inside an adopted shared checkout — work
+  happens in worktrees, structurally. The renderer refuses to render more
+  than `WARDEN_MAX_FS_RULES` (default 250) rules; if a refresh hits that
+  ceiling, thin out the scan directory rather than raising the ceiling
+  blind.
 
 - **Freshly cloned repos.** A repo cloned since the last policy refresh isn't
   protected against a root-directory session until the next refresh. A

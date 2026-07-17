@@ -94,3 +94,42 @@ class TestClassify(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestClassifyBash(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = make_repo(self.tmp.name)
+        self.wt1 = os.path.join(self.repo, ".claude", "worktrees", "wt1")
+        self.reg = os.path.join(self.tmp.name, "registry.json")
+        import json
+        json.dump({"repos": [{"root": os.path.realpath(self.repo)}]},
+                  open(self.reg, "w"))
+        os.environ["WARDEN_REGISTRY"] = self.reg
+
+    def tearDown(self):
+        del os.environ["WARDEN_REGISTRY"]
+        self.tmp.cleanup()
+
+    def test_bash_denied_at_adopted_shared_root(self):
+        v = guard.classify_bash(self.repo)
+        self.assertEqual((v.decision, v.rule), ("deny", "I4"))
+        self.assertIn("worktree", v.reason)
+
+    def test_bash_denied_in_subdir_of_shared_root(self):
+        v = guard.classify_bash(os.path.join(self.repo, "docs"))
+        self.assertEqual(v.decision, "deny")
+
+    def test_bash_allowed_in_worktree(self):
+        self.assertEqual(guard.classify_bash(self.wt1).decision, "none")
+
+    def test_bash_allowed_outside_repos(self):
+        self.assertEqual(guard.classify_bash(self.tmp.name).decision, "none")
+
+    def test_bash_allowed_at_unadopted_repo(self):
+        other = make_repo(self.tmp.name, name="unadopted")
+        self.assertEqual(guard.classify_bash(other).decision, "none")
+
+    def test_missing_registry_fails_open(self):
+        os.environ["WARDEN_REGISTRY"] = "/nonexistent/registry.json"
+        self.assertEqual(guard.classify_bash(self.repo).decision, "none")

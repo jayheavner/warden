@@ -112,21 +112,32 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TestCodexHomeCarveouts(unittest.TestCase):
-    def test_home_carveouts_rendered(self):
+class TestCodexHomeScope(unittest.TestCase):
+    def test_home_write_scope_is_deny_only(self):
+        # one home-wide write grant, never a per-tool list: a new tool's
+        # config dir must be writable without any warden change
         rules = render.codex_fs_rules([], "/etc/codex", home="/Users/u")
-        self.assertEqual(rules["/Users/u/.azure/**"], "write")
-        self.assertEqual(rules["/Users/u/.config/**"], "write")
-        self.assertEqual(rules["/Users/u/.cache/**"], "write")
-        self.assertEqual(rules["/Users/u/.codex/**"], "write")
-        # tamper surface stays closed inside the ~/.codex grant
-        self.assertEqual(rules["/Users/u/.codex/config.toml"], "read")
+        self.assertEqual(rules["/Users/u/**"], "write")
+        for stale in [".azure/**", ".aws/**", ".config/**", ".cache/**",
+                      ".local/**", "Library/Caches/**", "Library/Logs/**",
+                      ".codex/**"]:
+            self.assertNotIn("/Users/u/" + stale, rules)
 
-    def test_no_home_no_carveouts(self):
+    def test_home_tamper_surfaces_stay_read_only(self):
+        # governance files inside the home-wide write grant stay read-only
+        # (more-specific-wins): codex's own config, and the Claude user
+        # settings that carry warden's fallback enforcement
+        rules = render.codex_fs_rules([], "/etc/codex", home="/Users/u")
+        self.assertEqual(rules["/Users/u/.codex/config.toml"], "read")
+        self.assertEqual(rules["/Users/u/.claude/settings.json"], "read")
+        self.assertEqual(rules["/Users/u/.claude/settings.local.json"],
+                         "read")
+
+    def test_no_home_no_home_rules(self):
         rules = render.codex_fs_rules([], "/etc/codex")
         self.assertEqual(list(rules), ["/etc/codex/**"])
 
-    def test_disabled_render_has_no_carveouts(self):
+    def test_disabled_render_has_no_home_rules(self):
         rules = render.codex_fs_rules([], "/etc/codex", home="/Users/u",
                                       disabled=True)
         self.assertEqual(list(rules), ["/etc/codex/**"])

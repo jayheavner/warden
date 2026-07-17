@@ -86,9 +86,11 @@ class TestRender(unittest.TestCase):
         finally:
             del os.environ["WARDEN_MAX_FS_RULES"]
 
-    def test_allowwrite_carveouts_preserved(self):
-        # the base template's home carve-outs (agent CLIs, global memory,
-        # caches) must pass through the render untouched
+    def test_write_scope_is_deny_only(self):
+        # The write scope must never enumerate what tools may write — that
+        # list goes stale the day a new tool appears. The invariant: allow
+        # everything, deny only warden's protected surfaces (derived from
+        # repo scanning and governance files, never from tool knowledge).
         repos = render.scan_repos([self.parent])
         tpl = os.path.join(os.path.dirname(__file__), "..",
                            "templates", "managed-settings.base.json")
@@ -96,11 +98,15 @@ class TestRender(unittest.TestCase):
         out = render.render_settings(base, repos,
                                      "/Library/Application Support/ClaudeCode")
         allow = out["sandbox"]["filesystem"]["allowWrite"]
-        for want in ["~/.claude", "~/.azure", "~/.config", "~/.cache"]:
-            self.assertIn(want, allow)
+        self.assertEqual(allow, ["/"])
         deny = out["sandbox"]["filesystem"]["denyWrite"]
         self.assertIn("~/.claude/settings.json", deny)
         self.assertIn("~/.claude/settings.local.json", deny)
+        # no per-tool path may ever reappear in either list
+        for stale in ["~/.azure", "~/.aws", "~/.config", "~/.cache",
+                      "~/.local", "~/Library/Caches", "~/Library/Logs"]:
+            self.assertNotIn(stale, allow)
+            self.assertNotIn(stale, deny)
 
     def test_check_mode_writes_nothing(self):
         settings = os.path.join(self.tmp.name, "ms.json")

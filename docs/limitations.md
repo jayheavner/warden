@@ -16,18 +16,24 @@ job, not a bug. The full derivation lives in
   restrictions from Warden itself, but the native sandbox it enables applies
   Claude Code's own per-domain network approval flow; a headless or
   non-interactive session may see network commands fail rather than prompt.
-- **The rest of the home directory — mostly.** The native sandbox's default
-  write scope is the session's working directory plus temp. That default is
-  broader than Warden's job (confine the projects, not the machine), so the
-  base template grants `allowWrite` carve-outs for the directories agent
-  tooling legitimately writes: `~/.claude` (global memory, audit, plugins;
-  its `settings.json` stays denied), `~/.claude.json`, `~/.azure`, `~/.aws`,
-  `~/.config`, `~/.cache`, `~/.local`, `~/Library/Caches`, `~/Library/Logs`.
-  Extend the list in `templates/managed-settings.base.json` and run
-  `sudo warden refresh` if a CLI you use writes somewhere else. Selftest T17
-  asserts the carve-outs are live. The Codex render mirrors the same set
-  (`CODEX_HOME_CARVEOUTS` in `render.py`, plus `~/.codex` for session state
-  with its `config.toml` kept read-only).
+- **Everything outside the protected surfaces.** The write scope is
+  **deny-only, by design invariant**: Warden never enumerates the
+  directories tools may write, because any such list is a standing bet that
+  no new tool ever appears — and it loses that bet the first time one does
+  (2026-07-17: a curated carve-out list silently blocked the Azure CLI and
+  global agent memory). The Claude template grants `allowWrite: ["/"]` and
+  everything Warden protects is a deny: the managed root, the per-repo git
+  tamper surfaces, and the governance files (`~/.claude/settings.json`,
+  `settings.local.json`). Claude Code's own built-in protections (its
+  settings, hooks, and skills files are write-denied at every scope) apply
+  on top and cannot be overridden by the blanket allow. The Codex render
+  carries the same invariant: one `~/**` write grant, with only the
+  governance surfaces (`~/.codex/config.toml`, the Claude user settings)
+  held read-only. **The rule for future work: a blocked tool is never fixed
+  by extending an allow list — there is no allow list. Diagnose with
+  `warden doctor <path>`; if Warden is the blocker, the path is a protected
+  surface and that is the intended behavior.** Selftest T17 enforces the
+  invariant live by probing a novel, never-enumerated home path.
 - **Sessions started before installation or a policy change.** A session binds
   its policy when it starts. After installing Warden — or after adding or
   restructuring repos — restart any running sessions so they pick up the
@@ -56,17 +62,31 @@ job, not a bug. The full derivation lives in
   guard's I4 rule denies every Bash command it issues (file tools were
   already denied by I2) until it moves into a worktree. I4 is scoped to
   *adopted* repos (the rendered registry), so it inherits the registry's
-  refresh lag, and it reads the session's cwd — a session whose cwd is an
-  *ancestor* of the repos (e.g. the scan directory itself) can still
-  shell-write tracked files, though it cannot commit them or move refs
-  (tamper surfaces frozen; every write audited). The git-shaped version is
-  closed by the ref hook
+  refresh lag. The git-shaped version is closed by the ref hook
   above, whose R2 rule also refuses agent-session moves or deletes of any
   existing branch at a shared checkout root — including from headless or
   pre-install sessions the Bash sandbox never bound to, since the hook rides
   on git itself. R2 recognizes agent sessions by their environment markers
   (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `WARDEN_ACTIVE`, `CODEX_SANDBOX`);
   a session that scrubs those from its environment is not classified.
+
+- **Tracked bytes in trees a session shouldn't touch: git-level, not
+  byte-level, on the Claude side.** Under the deny-only write scope, a
+  governed session's *raw shell* could write bytes into a shared checkout's
+  tracked tree or a sibling worktree. The current sandbox cannot express
+  "writable machine minus the repo trees": enumerating tree entries blows
+  the exec-argument budget (the E2BIG incident), and a repo-root deny
+  freezes the repo's own worktrees and shared-`.git` because a write deny
+  beats every allow beneath it (both proven live 2026-07-17; the fix is an
+  upstream sandbox capability, allow-within-deny for writes — Codex's
+  engine already has it, which is why the Codex side keeps its per-entry
+  byte-level tree freeze). What holds everywhere regardless: file tools are
+  guard-denied outside the session's own worktree (I1–I3), commits and ref
+  moves against protected trees are impossible (tamper surfaces frozen, R2
+  hook), so stray bytes cannot enter history or reach origin and `git
+  checkout` recovers them; and every Bash command is audited. Warden's
+  wall for git history is absolute; its wall for working-tree bytes on the
+  Claude side is judgment (guard) plus audit, not syscalls.
 
 - **Mixed fleets during a disable/enable flip.** `sudo warden disable` and
   `sudo warden enable` take effect live for the tool guard, the Codex guard,

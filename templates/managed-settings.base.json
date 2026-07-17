@@ -5,15 +5,7 @@
     "allowUnsandboxedCommands": false,
     "filesystem": {
       "allowWrite": [
-        "~/.claude",
-        "~/.claude.json",
-        "~/.azure",
-        "~/.aws",
-        "~/.config",
-        "~/.cache",
-        "~/.local",
-        "~/Library/Caches",
-        "~/Library/Logs"
+        "/"
       ],
       "denyWrite": [
         "~/.claude/settings.json",

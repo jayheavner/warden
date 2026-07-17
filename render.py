@@ -93,16 +93,17 @@ def render_settings(base, repos, managed_root):
 CODEX_GIT_CARVEOUTS = ["objects/**", "refs/**", "logs/**", "worktrees/**",
                        "packed-refs", "packed-refs.lock", "FETCH_HEAD"]
 
-# home directories agent tooling legitimately writes (mirrors the Claude
-# template's allowWrite carve-outs): Codex's workspace-write sandbox
-# otherwise confines writes to cwd + temp, blocking CLI token caches,
-# session state, and caches. ~/.codex stays writable for session state,
-# but its config is a tamper surface and stays denied.
-CODEX_HOME_CARVEOUTS = {
-    ".codex/**": "write", ".codex/config.toml": "read",
-    ".azure/**": "write", ".aws/**": "write", ".config/**": "write",
-    ".cache/**": "write", ".local/**": "write",
-    "Library/Caches/**": "write", "Library/Logs/**": "write",
+# Write scope is deny-only: warden never enumerates the directories tools
+# may write — any such list is stale the day a new tool appears (proven
+# 2026-07-17: a curated carve-out list silently blocked the Azure CLI and
+# global agent memory). The home directory gets one blanket write grant;
+# the only paths held back are governance surfaces, which are warden's to
+# know about. Repo protection rules are more specific than the home grant,
+# so they still win (codex precedence is more-specific-wins, lab-proven).
+CODEX_HOME_TAMPER_SURFACES = {
+    ".codex/config.toml": "read",
+    ".claude/settings.json": "read",
+    ".claude/settings.local.json": "read",
 }
 
 
@@ -119,7 +120,8 @@ def codex_fs_rules(repos, managed_root, home=None, disabled=False):
         return rules
     if home:
         home = home.rstrip("/")
-        for sub, access in CODEX_HOME_CARVEOUTS.items():
+        rules[home + "/**"] = "write"
+        for sub, access in CODEX_HOME_TAMPER_SURFACES.items():
             rules[home + "/" + sub] = access
     for r in repos:
         root = r["root"]

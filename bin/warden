@@ -5,9 +5,10 @@ DEST="${WARDEN_DEST:-/Library/Application Support/ClaudeCode}"
 WD="$DEST/warden"
 DAEMON_LABEL="com.warden.refresh"
 
-# Heredocs need a writable temp dir. Inside a governed session /tmp is
-# outside the sandbox's write scope, so fall back to the ~/.claude
-# carve-out — otherwise status/verify heredocs crash and report falsely.
+# Heredocs need a writable temp dir. Current policy keeps /tmp writable
+# (deny-only write scope), but sessions still bound to an older render may
+# not have it — fall back to ~/.claude so heredocs can't crash and report
+# falsely.
 if ! ( : > "${TMPDIR:-/tmp}/.warden-tmpprobe.$$" ) 2>/dev/null; then
   export TMPDIR="$HOME/.claude/warden/tmp"
   mkdir -p "$TMPDIR" 2>/dev/null || true
@@ -327,6 +328,11 @@ else:
     print("warden forget: dropped %s" % json.dumps(entry))
 EOF
     ;;
+  doctor)
+    # "what just got blocked and why" in one command — never guess again
+    shift || true
+    exec python3 "$WD/doctor.py" "$@"
+    ;;
   selftest)
     exec bash "$WD/selftest.sh"
     ;;
@@ -549,7 +555,7 @@ EOF
     exit "$STATUS_RC"
     ;;
   *)
-    echo "usage: warden {disable|enable|refresh|land [branch]|remote add <name> <url>|forget <repo>|selftest|verify-claude|codex-selftest|status}" >&2
+    echo "usage: warden {disable|enable|refresh|land [branch]|remote add <name> <url>|forget <repo>|doctor [path]|selftest|verify-claude|codex-selftest|status}" >&2
     exit 2
     ;;
 esac

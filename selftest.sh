@@ -4,10 +4,10 @@
 # repos; every verdict comes from filesystem truth. Maps to the acceptance
 # tests in the design doc (T1-T10).
 #
-# Heredocs need a writable temp dir. Inside a governed session /tmp is
-# outside the sandbox's write scope, so fall back to the ~/.claude
-# carve-out — otherwise every heredoc-backed check crashes before testing
-# anything and reports a false FAIL.
+# Heredocs need a writable temp dir. Current policy keeps /tmp writable
+# (deny-only write scope), but sessions still bound to an older render may
+# not have it — fall back to ~/.claude so heredoc-backed checks can't
+# crash and report a false FAIL.
 if ! ( : > "${TMPDIR:-/tmp}/.warden-tmpprobe.$$" ) 2>/dev/null; then
   export TMPDIR="$HOME/.claude/warden/tmp"
   mkdir -p "$TMPDIR"
@@ -251,19 +251,36 @@ else
   fail "T16 user-settings fallback delivered" "run: sudo warden refresh (Enterprise override would leave claude ungoverned)"
 fi
 
-# T17: home carve-outs writable (agent CLIs, global memory, caches) — the
-# sandbox must confine the projects, not the whole home directory
-CO="$HOME/.cache/warden-selftest-$$"
-if touch "$CO" 2>/dev/null; then
-  rm -f "$CO"; pass "T17 home carve-out (~/.cache) writable"
+# T17: write scope is deny-only — the sandbox confines the projects, not
+# the machine. The probe is a path warden has never heard of, standing in
+# for whatever tool gets installed tomorrow: if a NOVEL dotdir isn't
+# writable, some enumeration of "allowed" paths has crept back in and the
+# next new tool will break.
+CO="$HOME/.warden-selftest-novel-$$"
+if mkdir "$CO" 2>/dev/null && touch "$CO/probe" 2>/dev/null; then
+  rm -rf "$CO"; pass "T17 novel home path writable (deny-only write scope)"
 else
-  fail "T17 home carve-out (~/.cache) writable" "sandbox is over-blocking; check allowWrite in the rendered settings"
+  rm -rf "$CO" 2>/dev/null
+  fail "T17 novel home path writable (deny-only write scope)" "an allow-list is back in the rendered settings; new tools will break — fix the render, never extend a list"
 fi
 CO="$HOME/.claude/warden/selftest-write-$$"
 if touch "$CO" 2>/dev/null; then
-  rm -f "$CO"; pass "T17b home carve-out (~/.claude) writable"
+  rm -f "$CO"; pass "T17b global agent state (~/.claude) writable"
 else
-  fail "T17b home carve-out (~/.claude) writable" "global memory and audit writes would be blocked"
+  fail "T17b global agent state (~/.claude) writable" "global memory and audit writes would be blocked"
+fi
+CO="/tmp/warden-selftest-$$"
+if touch "$CO" 2>/dev/null; then
+  rm -f "$CO"; pass "T17c /tmp writable"
+else
+  fail "T17c /tmp writable" "tools with hardcoded /tmp paths (and shell heredocs) would break"
+fi
+# T17d: the deny side must still hold inside the blanket allow — a session
+# must NOT be able to rewrite its own governance layer
+if ( : >> "$HOME/.claude/settings.json" ) 2>/dev/null; then
+  fail "T17d user settings.json write blocked" "governance file writable — deny-within-allow is not holding"
+else
+  pass "T17d user settings.json write blocked"
 fi
 
 # T15: every adopted repo resolves to an integration lane with provenance

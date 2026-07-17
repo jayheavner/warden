@@ -178,6 +178,22 @@ else
   pass "T10 requirements.toml append blocked"
 fi
 
+# T17: write scope is deny-only — a NOVEL home path (a tool warden has
+# never heard of) must be writable; the governance surfaces inside the
+# home-wide grant must stay read-only
+CO="$HOME/.warden-selftest-novel-$$"
+if mkdir "$CO" 2>/dev/null && touch "$CO/probe" 2>/dev/null; then
+  rm -rf "$CO"; pass "T17 novel home path writable (deny-only write scope)"
+else
+  rm -rf "$CO" 2>/dev/null
+  fail "T17 novel home path writable (deny-only write scope)" "an allow-list is back in the render; new tools will break — fix the render, never extend a list"
+fi
+if [ -f "$HOME/.codex/config.toml" ] && ( : >> "$HOME/.codex/config.toml" ) 2>/dev/null; then
+  fail "T17b ~/.codex/config.toml write blocked" "governance file writable inside the home-wide grant"
+else
+  pass "T17b ~/.codex/config.toml write blocked"
+fi
+
 echo
 echo "== result: $PASSN pass, $FAILN fail, $SKIPN skip"
 echo "== manual checks remaining:"

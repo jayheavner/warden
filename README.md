@@ -130,6 +130,8 @@ that memory; `warden status` shows each repo's resolved lane and why.
 ## Audit queries
 
 ```sh
+warden doctor <path>   # who blocks a write at <path>, rule by rule, all layers
+warden doctor          # enforcement state + most recent denials from the audit trail
 tail -f ~/.claude/warden/audit.jsonl
 log show --last 1h --predicate 'eventMessage CONTAINS "warden"'
 log show --last 1h --predicate 'sender == "Sandbox"'   # raw sandbox denials

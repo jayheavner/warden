@@ -11,7 +11,7 @@ WD="$DEST/warden"
 SCAN_HOME="${SUDO_USER:+/Users/$SUDO_USER}"
 SCAN_HOME="${SCAN_HOME:-$HOME}"
 SCAN_DIR="${WARDEN_SCAN_DIR:-$SCAN_HOME/claude}"
-FILES=(guard.py render.py landd.py lanes.py userfallback.py selftest.sh uninstall.sh gitconfig-include.sh templates/managed-settings.base.json templates/hookpath.gitconfig)
+FILES=(guard.py render.py doctor.py landd.py lanes.py userfallback.py selftest.sh uninstall.sh gitconfig-include.sh templates/managed-settings.base.json templates/hookpath.gitconfig)
 
 if [ "${1:-}" = "--print-plan" ]; then
   printf 'would install to %s:\n' "$WD"

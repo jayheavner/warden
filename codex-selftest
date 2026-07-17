@@ -23,6 +23,17 @@ pass() { say PASS "$1"; PASSN=$((PASSN+1)); }
 fail() { say FAIL "$1" "${2:-}"; FAILN=$((FAILN+1)); }
 skip() { say SKIP "$1" "${2:-}"; SKIPN=$((SKIPN+1)); }
 
+# Refuse to run outside a Codex session: warden governs only agent sessions,
+# so from a plain terminal every write probe would "succeed" and print five
+# false FAILs. Codex sessions mark their shells with CODEX_SANDBOX (the same
+# marker the R2 git hook classifies on).
+if [ -z "${CODEX_SANDBOX:-}" ]; then
+  echo "warden codex-selftest: this shell is not a Codex session (CODEX_SANDBOX unset)."
+  echo "  Your own shells are ungoverned by design, so the probes prove nothing here."
+  echo "  Start a FRESH Codex session and ask it to run: warden codex-selftest"
+  exit 3
+fi
+
 # T0: activation. Codex has no managed env injection analog to WARDEN_ACTIVE,
 # so activation is proven directly: policy file present + a real deny below.
 if [ ! -r "$DEST/requirements.toml" ]; then

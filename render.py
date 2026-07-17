@@ -93,11 +93,27 @@ def render_settings(base, repos, managed_root):
 CODEX_GIT_CARVEOUTS = ["objects/**", "refs/**", "logs/**", "worktrees/**",
                        "packed-refs", "packed-refs.lock", "FETCH_HEAD"]
 
+# home directories agent tooling legitimately writes (mirrors the Claude
+# template's allowWrite carve-outs): Codex's workspace-write sandbox
+# otherwise confines writes to cwd + temp, blocking CLI token caches,
+# session state, and caches. ~/.codex stays writable for session state,
+# but its config is a tamper surface and stays denied.
+CODEX_HOME_CARVEOUTS = {
+    ".codex/**": "write", ".codex/config.toml": "deny",
+    ".azure/**": "write", ".aws/**": "write", ".config/**": "write",
+    ".cache/**": "write", ".local/**": "write",
+    "Library/Caches/**": "write", "Library/Logs/**": "write",
+}
 
-def codex_fs_rules(repos, managed_root, disabled=False):
+
+def codex_fs_rules(repos, managed_root, home=None, disabled=False):
     rules = {managed_root.rstrip("/") + "/**": "deny"}
     if disabled:
         return rules
+    if home:
+        home = home.rstrip("/")
+        for sub, access in CODEX_HOME_CARVEOUTS.items():
+            rules[home + "/" + sub] = access
     for r in repos:
         root = r["root"]
         for c in CODEX_GIT_CARVEOUTS:
@@ -116,12 +132,27 @@ def codex_fs_rules(repos, managed_root, disabled=False):
     return rules
 
 
-def render_codex_requirements(base_text, repos, managed_root, disabled=False):
+def render_codex_requirements(base_text, repos, managed_root, home=None,
+                              disabled=False):
     lines = [base_text.rstrip("\n"), "", "[permissions.warden.filesystem]"]
     for path, access in sorted(
-            codex_fs_rules(repos, managed_root, disabled=disabled).items()):
+            codex_fs_rules(repos, managed_root, home=home,
+                           disabled=disabled).items()):
         lines.append("%s = %s" % (json.dumps(path), json.dumps(access)))
     return "\n".join(lines) + "\n"
+
+
+def scan_owner_home(parents):
+    """Home directory of the scan dir's owner — the governed user. The
+    renderer runs as root, so os.path.expanduser would give root's home."""
+    import pwd
+    for parent in parents:
+        parent = os.path.realpath(os.path.expanduser(parent))
+        try:
+            return pwd.getpwuid(os.stat(parent).st_uid).pw_dir
+        except (OSError, KeyError):
+            continue
+    return None
 
 
 def render_gitconfig(repos, managed_root):
@@ -176,15 +207,18 @@ def main(argv=None):
     }
     if a.format == "codex":
         import tomllib
+        home = scan_owner_home(a.scan)
         text = render_codex_requirements(open(a.base).read(), repos,
-                                         a.managed_root, disabled=a.disabled)
+                                         a.managed_root, home=home,
+                                         disabled=a.disabled)
         tomllib.loads(text)
         if a.check:
             print(text)
             return 0
         _atomic_write_text(a.write_settings, text, tomllib.loads)
         _atomic_write(a.write_registry, registry)
-        rules = codex_fs_rules(repos, a.managed_root, disabled=a.disabled)
+        rules = codex_fs_rules(repos, a.managed_root, home=home,
+                               disabled=a.disabled)
         print("wrote %s (%d repos, %d filesystem rules)" % (
             a.write_settings, len(repos), len(rules)))
         return 0

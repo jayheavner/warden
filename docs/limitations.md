@@ -25,8 +25,9 @@ job, not a bug. The full derivation lives in
   `~/.config`, `~/.cache`, `~/.local`, `~/Library/Caches`, `~/Library/Logs`.
   Extend the list in `templates/managed-settings.base.json` and run
   `sudo warden refresh` if a CLI you use writes somewhere else. Selftest T17
-  asserts the carve-outs are live. (The Codex port does not yet mirror these
-  carve-outs.)
+  asserts the carve-outs are live. The Codex render mirrors the same set
+  (`CODEX_HOME_CARVEOUTS` in `render.py`, plus `~/.codex` for session state
+  with its `config.toml` kept read-only).
 - **Sessions started before installation or a policy change.** A session binds
   its policy when it starts. After installing Warden — or after adding or
   restructuring repos — restart any running sessions so they pick up the

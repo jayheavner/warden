@@ -4,6 +4,16 @@
 # real repos; every verdict comes from filesystem truth. Mirrors the Claude
 # Code selftest T1-T10 (acceptance tests in the design doc + Codex addendum).
 set -u
+
+# Heredocs need a writable temp dir. Inside a governed session /tmp is
+# outside the sandbox's write scope, so fall back to the ~/.codex
+# carve-out — otherwise heredoc-backed checks crash and report falsely.
+if ! ( : > "${TMPDIR:-/tmp}/.warden-tmpprobe.$$" ) 2>/dev/null; then
+  export TMPDIR="$HOME/.codex/warden-tmp"
+  mkdir -p "$TMPDIR" 2>/dev/null || true
+else
+  rm -f "${TMPDIR:-/tmp}/.warden-tmpprobe.$$"
+fi
 DEST="/etc/codex"
 WD="$DEST/warden"
 REG="$WD/registry.json"

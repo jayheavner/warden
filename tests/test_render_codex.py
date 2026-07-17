@@ -110,3 +110,31 @@ class TestRenderCodex(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCodexHomeCarveouts(unittest.TestCase):
+    def test_home_carveouts_rendered(self):
+        rules = render.codex_fs_rules([], "/etc/codex", home="/Users/u")
+        self.assertEqual(rules["/Users/u/.azure/**"], "write")
+        self.assertEqual(rules["/Users/u/.config/**"], "write")
+        self.assertEqual(rules["/Users/u/.cache/**"], "write")
+        self.assertEqual(rules["/Users/u/.codex/**"], "write")
+        # tamper surface stays closed inside the ~/.codex grant
+        self.assertEqual(rules["/Users/u/.codex/config.toml"], "deny")
+
+    def test_no_home_no_carveouts(self):
+        rules = render.codex_fs_rules([], "/etc/codex")
+        self.assertEqual(list(rules), ["/etc/codex/**"])
+
+    def test_disabled_render_has_no_carveouts(self):
+        rules = render.codex_fs_rules([], "/etc/codex", home="/Users/u",
+                                      disabled=True)
+        self.assertEqual(list(rules), ["/etc/codex/**"])
+
+    def test_scan_owner_home_of_tempdir(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = render.scan_owner_home([d])
+            self.assertTrue(home and os.path.isabs(home))
+
+    def test_scan_owner_home_missing_dir(self):
+        self.assertIsNone(render.scan_owner_home(["/no/such/dir"]))

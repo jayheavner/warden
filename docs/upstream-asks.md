@@ -34,6 +34,20 @@ deny never took effect.
 **Ask:** apply the documented read-rule precedence (most specific path
 wins) to write rules as well.
 
+**This is a compiler gap, not an OS gap:** raw Seatbelt profiles express
+the nesting directly — Warden's own semantics lab runs
+`(deny file-write* (subpath <repo>))` followed by
+`(allow file-write* (subpath <worktree>))` and the full positive git op
+suite passes inside the re-opened subtree
+(`tests/lab/derive.sh`, recorded in `tests/lab/EVIDENCE-2026-07-16.txt`).
+The capability exists in the sandbox engine Claude Code already uses; the
+settings-to-profile compiler just doesn't emit it for write rules.
+
+**Retirement trigger:** `tests/lab/probe-write-precedence.sh` reports
+`RETIRED`. Then upgrade `render.py` to the byte-level tree freeze (one
+deny per repo root plus worktree/shared-`.git` allows) and delete the
+git-level-residual entry from [limitations.md](limitations.md).
+
 ## Ask 2: sandbox profile delivered by file, not exec argument
 
 The generated Seatbelt profile is passed to every Bash spawn as a single
@@ -53,6 +67,13 @@ policy intent, becomes the design constraint.
 supports profile-by-path), or otherwise remove rule-count from the exec
 argument budget. Failing that, refuse to start with a clear diagnostic
 instead of per-command `E2BIG`.
+
+**Retirement trigger:** a Claude Code release whose Bash spawns no longer
+carry the profile as an exec argument (re-test by raising
+`WARDEN_MAX_FS_RULES` in a disposable render and spawning from a fresh
+session). Then delete the ceiling (`MAX_FS_RULES_DEFAULT`) from
+`render.py` and the profile-size entry from
+[limitations.md](limitations.md).
 
 ## What Warden does until these land
 

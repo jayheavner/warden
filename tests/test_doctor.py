@@ -43,6 +43,21 @@ class TestVerdicts(unittest.TestCase):
         self.assertEqual(access, "write")
 
 
+class TestVersionDrift(unittest.TestCase):
+    def test_pinned_version_is_quiet(self):
+        self.assertIsNone(doctor.version_drift(
+            doctor.PROVEN_ON_CLAUDE + " (Claude Code)"))
+
+    def test_moved_version_advises_reverification(self):
+        msg = doctor.version_drift("9.9.9 (Claude Code)", pinned="2.1.212")
+        self.assertIn("9.9.9", msg)
+        self.assertIn("2.1.212", msg)
+        self.assertIn("probe-write-precedence", msg)
+
+    def test_missing_cli_reported(self):
+        self.assertIn("not found", doctor.version_drift(""))
+
+
 class TestStrayBytes(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

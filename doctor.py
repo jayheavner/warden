@@ -17,6 +17,32 @@ MANAGED = os.environ.get("WARDEN_DEST",
                          "/Library/Application Support/ClaudeCode")
 CODEX_REQ = os.environ.get("WARDEN_CODEX_REQ", "/etc/codex/requirements.toml")
 
+# The Claude Code version the sandbox constraints in docs/limitations.md
+# and docs/upstream-asks.md were last proven on. When the installed
+# version moves, those constraints are unverified claims until the lab
+# probes re-prove them (or show an upstream fix landed and warden's
+# design should upgrade).
+PROVEN_ON_CLAUDE = "2.1.212"
+
+
+def version_drift(current, pinned=PROVEN_ON_CLAUDE):
+    """Advisory text when the harness version left the proven pin, else
+    None. `current` is `claude --version` output, e.g. '2.1.212 (...)'."""
+    cur = (current or "").split()[0] if (current or "").strip() else ""
+    if not cur:
+        return ("claude CLI not found — the version the sandbox "
+                "constraints were proven on (%s) cannot be checked."
+                % pinned)
+    if cur == pinned:
+        return None
+    return ("Claude Code is %s but the documented sandbox constraints "
+            "were proven on %s. Re-verify before trusting them: run "
+            "tests/lab/probe-write-precedence.sh from a plain terminal — "
+            "if it reports RETIRED, an upstream fix landed and warden "
+            "should upgrade to byte-level tree freeze (see "
+            "docs/upstream-asks.md); if STANDS, update PROVEN_ON_CLAUDE "
+            "in doctor.py to %s." % (cur, pinned, cur))
+
 
 def _home():
     return os.path.expanduser("~")
@@ -198,6 +224,15 @@ def main(argv=None):
               "sessions." % since)
     else:
         print("state: enabled")
+    import subprocess
+    try:
+        cur = subprocess.run(["claude", "--version"], capture_output=True,
+                             text=True, timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        cur = ""
+    drift = version_drift(cur)
+    if drift:
+        print("version drift: " + drift)
     dirty_shared_checkouts()
     recent_denials()
     return 0

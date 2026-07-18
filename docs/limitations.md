@@ -7,6 +7,17 @@ job, not a bug. The full derivation lives in
 [session-isolation.md](session-isolation.md); the Codex specifics are in
 [codex-port.md](codex-port.md).
 
+**This document is not allowed to rot.** Every entry is one of two kinds,
+and each kind has a watcher: (a) *design invariants*, enforced by a named
+test or selftest probe that fails if the entry is violated (e.g. selftest
+T17 for the deny-only write scope); (b) *harness constraints*, pinned to
+the Claude Code version they were empirically proven on
+(`PROVEN_ON_CLAUDE` in `doctor.py`) — `warden doctor` flags version drift
+and names the lab probe that re-proves or retires the entry
+(`tests/lab/probe-write-precedence.sh` for the write-precedence
+constraint). An entry with neither a test nor a pin is a defect in this
+document.
+
 ## What Warden does not govern
 
 - **Anything that isn't a governed agent session.** Your own shells, editors,

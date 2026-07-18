@@ -283,6 +283,19 @@ else
   pass "T17d user settings.json write blocked"
 fi
 
+# T19: credential store (macOS keychain) writable — gh/az refresh their
+# tokens through keychain WRITES; if the sandbox denies those, in-session
+# token refreshes fail ("failed to store", keyring reported invalid) while
+# reads still work, which presents as mysterious GitHub auth breakage.
+KC="warden-selftest-$$"
+if security add-generic-password -a warden-selftest -s "$KC" -w probe 2>/dev/null \
+   && security delete-generic-password -s "$KC" >/dev/null 2>&1; then
+  pass "T19 keychain write (credential refresh) works"
+else
+  security delete-generic-password -s "$KC" >/dev/null 2>&1
+  fail "T19 keychain write (credential refresh) works" "in-session gh/az token refreshes will fail — run credential refreshes from a human terminal until this passes"
+fi
+
 # T15: every adopted repo resolves to an integration lane with provenance
 if warden status 2>/dev/null | grep -q "lane "; then
   pass "T15 lanes resolved for adopted repos"

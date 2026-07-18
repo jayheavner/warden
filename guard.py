@@ -22,6 +22,22 @@ DISABLED_BANNER = ("⚠ Warden enforcement is DISABLED (since %s). Session "
 DISABLED_ADDENDUM = ("Bash writes in sessions started before the disable "
                      "are still sandboxed until those sessions restart.")
 
+# The working model, stated to every session at start. Agents on one box
+# follow the discipline dev teams have used for decades — private branches,
+# protected trunk, integration only by merge — with worktrees playing the
+# role of branches because everyone shares one filesystem.
+DOCTRINE = (
+    "warden: agents on this machine work like a dev team sharing one box — "
+    "worktrees play the role of branches. Your worktree (%s) is your "
+    "branch: write freely there. Writes never cross three lines: other "
+    "sessions' worktrees (other devs' branches — read them, never write "
+    "them), any repo's shared checkout (trunk — read-only; finished work "
+    "integrates ONLY via `warden land <branch>`, never by asking the human "
+    "to merge), and any repo this session is not pegged to (never "
+    "legitimate, for any reason). Vanilla folders outside repo territory "
+    "are freely writable. These denials are by design — do not probe, "
+    "retry, or work around them.")
+
 
 def sentinel_path(managed_root=MANAGED_ROOT_DEFAULT):
     return (os.environ.get("WARDEN_SENTINEL")
@@ -109,17 +125,41 @@ def classify(target, session_cwd, managed_root=MANAGED_ROOT_DEFAULT):
             return Verdict("allow", "I1", "inside this session's own workspace")
         return Verdict(
             "deny", "I3",
-            "warden I3: %s is inside workspace %s, which is not this "
-            "session's workspace (%s). Write only inside your own worktree."
+            "warden I3: %s is inside %s — another session's worktree, i.e. "
+            "another dev's branch. Read it freely; writing it is never "
+            "allowed, for any reason. If you need its changes, wait for "
+            "them to land on trunk. Your branch is %s."
             % (t, wt_t, wt_c or cwd))
     repo_t = shared_root(t)
     if repo_t is None:
         return Verdict("none", "", "")
+    in_this_repo = cwd == repo_t or cwd.startswith(repo_t + os.sep)
+    if wt_c and wt_c.startswith(repo_t + os.sep):
+        # session pegged to this repo: the target is its own trunk
+        return Verdict(
+            "deny", "I2",
+            "warden I2: %s is on trunk — the shared checkout %s is "
+            "read-only to every session, exactly like committing straight "
+            "to main on a team repo. Do the work in your own worktree (%s) "
+            "and integrate it with `warden land <branch>`."
+            % (t, repo_t, wt_c))
+    if in_this_repo:
+        # session sitting at the repo root with no worktree yet
+        return Verdict(
+            "deny", "I2",
+            "warden I2: %s is on trunk — the shared checkout %s is "
+            "read-only to every session, and work never happens on trunk. "
+            "Create or enter a worktree first (the app creates one per "
+            "session); then integrate with `warden land <branch>`."
+            % (t, repo_t))
     return Verdict(
         "deny", "I2",
-        "warden I2: %s is inside the shared checkout %s, which is read-only "
-        "to every session. Do this work inside your own worktree (the app "
-        "creates one per session)." % (t, repo_t))
+        "warden I2: %s belongs to repo %s, and this session is not pegged "
+        "to that repo — a session writes only in its own repo's worktree, "
+        "the same way a dev never pushes to another team's repo. This is "
+        "never legitimate, for any reason: do not retry or work around it; "
+        "report the mis-scoped task and continue with what is in scope."
+        % (t, repo_t))
 
 
 def registry_roots(managed_root=MANAGED_ROOT_DEFAULT):
@@ -146,10 +186,11 @@ def classify_bash(session_cwd, managed_root=MANAGED_ROOT_DEFAULT):
     if root and root in registry_roots(managed_root):
         return Verdict(
             "deny", "I4",
-            "warden I4: this session's working directory is inside the "
-            "shared checkout %s, which is read-only to every session. "
-            "Create or enter a worktree (EnterWorktree) and work there; "
-            "shell commands are denied at shared checkouts." % root)
+            "warden I4: this session's working directory is trunk — the "
+            "shared checkout %s is read-only to every session, and work "
+            "never happens on trunk. Create or enter a worktree "
+            "(EnterWorktree) and work there; shell commands are denied "
+            "until you do." % root)
     return Verdict("none", "", "")
 
 
@@ -239,21 +280,17 @@ def main():
                 print(json.dumps({"hookSpecificOutput": {
                     "hookEventName": "SessionStart",
                     "additionalContext":
-                        "⚠ warden: this session started in the shared checkout "
-                        "%s, which is read-only to every session — writes, "
-                        "commits, and branch moves here are denied. Create or "
-                        "enter a worktree before doing any work (the app "
-                        "creates one per session)." % root}}))
+                        "⚠ warden: this session started on trunk — the shared "
+                        "checkout %s is read-only to every session, and work "
+                        "never happens on trunk. Create or enter a worktree "
+                        "before doing any work (the app creates one per "
+                        "session); file tools and shell commands are denied "
+                        "until you do." % root}}))
             else:
                 _audit(dict(base, target=scope, verdict="session-start", rule=""))
                 print(json.dumps({"hookSpecificOutput": {
                     "hookEventName": "SessionStart",
-                    "additionalContext":
-                        "warden enforcement is active: writes are limited to your "
-                        "workspace (%s); shared checkouts and other sessions' "
-                        "worktrees are read-only. To integrate finished work, run "
-                        "`warden land <branch>` — a root daemon fast-forwards the "
-                        "shared HEAD branch; never ask the human to merge." % scope}}))
+                    "additionalContext": DOCTRINE % scope}}))
         elif event in ("WorktreeCreate", "WorktreeRemove"):
             _audit(dict(base, target=json.dumps(tin)[:300], verdict=event,
                         rule=""))

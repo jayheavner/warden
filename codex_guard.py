@@ -108,10 +108,7 @@ def main():
                               rule=""))
             print(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "SessionStart",
-                "additionalContext":
-                    "warden enforcement is active: writes are limited to "
-                    "your workspace (%s); shared checkouts and other "
-                    "sessions' worktrees are read-only." % scope}}))
+                "additionalContext": guard.DOCTRINE % scope}}))
         else:
             guard._audit(dict(base, target="", verdict="ignored-event",
                               rule=event))

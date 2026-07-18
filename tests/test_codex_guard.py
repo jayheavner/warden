@@ -101,7 +101,8 @@ class TestCodexGuard(unittest.TestCase):
         out = json.loads(p.stdout)
         h = out["hookSpecificOutput"]
         self.assertEqual(h["hookEventName"], "SessionStart")
-        self.assertIn("warden enforcement is active", h["additionalContext"])
+        self.assertIn("trunk", h["additionalContext"])
+        self.assertIn("warden land", h["additionalContext"])
         self.assertIn(os.path.realpath(self.wt1), h["additionalContext"])
 
     def test_bad_stdin_fails_open(self):

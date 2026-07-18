@@ -133,3 +133,44 @@ class TestClassifyBash(unittest.TestCase):
     def test_missing_registry_fails_open(self):
         os.environ["WARDEN_REGISTRY"] = "/nonexistent/registry.json"
         self.assertEqual(guard.classify_bash(self.repo).decision, "none")
+
+
+class TestDoctrineMessages(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.alpha = make_repo(self.tmp.name, "alpha", worktrees=("mine",))
+        self.fred = make_repo(self.tmp.name, "fred", worktrees=("theirs",))
+        self.mine = os.path.join(self.alpha, ".claude", "worktrees", "mine")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_own_trunk_names_the_land_lane(self):
+        v = guard.classify(os.path.join(self.alpha, "README.md"), self.mine)
+        self.assertEqual((v.decision, v.rule), ("deny", "I2"))
+        self.assertIn("trunk", v.reason)
+        self.assertIn("warden land", v.reason)
+
+    def test_foreign_repo_is_never_legitimate(self):
+        v = guard.classify(os.path.join(self.fred, "README.md"), self.mine)
+        self.assertEqual((v.decision, v.rule), ("deny", "I2"))
+        self.assertIn("not pegged", v.reason)
+        self.assertIn("never legitimate", v.reason)
+        self.assertNotIn("warden land", v.reason)
+
+    def test_root_cwd_session_told_to_enter_worktree(self):
+        v = guard.classify(os.path.join(self.alpha, "README.md"), self.alpha)
+        self.assertEqual((v.decision, v.rule), ("deny", "I2"))
+        self.assertIn("worktree", v.reason)
+
+    def test_foreign_worktree_is_anothers_branch(self):
+        theirs = os.path.join(self.fred, ".claude", "worktrees", "theirs")
+        v = guard.classify(os.path.join(theirs, "src", "f.py"), self.mine)
+        self.assertEqual((v.decision, v.rule), ("deny", "I3"))
+        self.assertIn("another dev's branch", v.reason)
+
+    def test_doctrine_states_the_lines(self):
+        d = guard.DOCTRINE % "/x"
+        for phrase in ["branch", "trunk", "warden land", "not pegged",
+                       "Vanilla folders"]:
+            self.assertIn(phrase, d)

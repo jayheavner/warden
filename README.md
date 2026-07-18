@@ -3,12 +3,22 @@
 Enforced session isolation for concurrent Claude Code and Codex sessions on
 one Mac.
 
-When you run several coding-agent sessions at once — Claude Code, Codex, or
-both — each in its own git worktree, nothing normally stops one session from
-writing into another's files, or into the shared checkout they all branched
-from. Warden makes each session able to write only inside its own worktree.
-Every repo's shared checkout and every other session's worktree are
-read-only, enforced at the OS sandbox layer, not by prose or convention.
+Agent sessions on one Mac are a dev team sharing one box. Dev teams solved
+isolation decades ago — private branches, protected trunk, integration only
+by merge — but that model assumes every dev has their own machine. Agents
+don't, so worktrees play the role of branches. Warden enforces the same
+discipline: a session writes only in its own worktree (its branch); other
+sessions' worktrees are other devs' branches (read freely, write never);
+every repo's shared checkout is trunk (read-only, moved only by
+`warden land`); and a repo the session isn't pegged to is another team's
+repo entirely (writes there are never legitimate). The boundary marker is
+`.git`: folders inside a repo are governed territory, vanilla folders are
+just the machine and stay freely writable. All of it is enforced at the OS
+sandbox and hook layers, not by prose or convention — a developer is not
+blocked from his own computer; he's blocked from other people's branches.
+
+See [goals.md](docs/goals.md) for the phase-1 goal statement this design
+serves.
 
 Warden is inert until installed. Installing or removing it is a single command
 per agent.

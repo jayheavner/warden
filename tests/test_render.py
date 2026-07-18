@@ -61,39 +61,51 @@ class TestRender(unittest.TestCase):
         self.assertIs(base["sandbox"]["enabled"], False)
         self.assertNotIn("filesystem", base["sandbox"])
 
-    def test_seatbelt_freezes_trunk_reopens_worktree(self):
-        # last-match-wins: deny the checkout, re-open worktrees + shared
-        # .git write set, re-close the protected HEAD-branch refs
+    def test_seatbelt_freezes_trunk_AND_all_worktrees(self):
+        # the sibling-worktree fix: the profile must NOT blanket-re-open
+        # the worktrees container — no worktree is writable except via the
+        # per-session parameter. Only the shared-.git write set is re-opened.
         repos = render.scan_repos([self.parent])
         root = os.path.realpath(self.repo)
         b = repos[0]["head_branch"]
         sb = render.render_seatbelt(
             repos, "/Library/Application Support/ClaudeCode")
         self.assertIn('(deny file-write* (subpath "%s"))' % root, sb)
-        self.assertIn('(allow file-write* (subpath "%s/.claude/worktrees"))'
-                      % root, sb)
+        # NO blanket worktrees-container allow (that let siblings write)
+        self.assertNotIn('(allow file-write* (subpath "%s/.claude/worktrees"))'
+                         % root, sb)
         self.assertIn('(allow file-write* (subpath "%s/.git/objects"))'
                       % root, sb)
         self.assertIn('(deny file-write* (literal "%s/.git/refs/heads/%s"))'
                       % (root, b), sb)
-        # managed root frozen; profile is valid seatbelt
         self.assertIn('(deny file-write* (subpath "/Library/Application '
                       'Support/ClaudeCode"))', sb)
         self.assertTrue(sb.startswith("(version 1)\n(allow default)"))
 
-    def test_seatbelt_rule_order_deny_before_reopen(self):
-        # correctness hinges on order: the repo deny must precede its
-        # worktree/​.git allows, and the ref denies must come last
+    def test_seatbelt_own_worktree_param_is_last(self):
+        # the per-session allow must be the FINAL rule so last-match-wins
+        # re-opens exactly one worktree over the repo denies above it
+        repos = render.scan_repos([self.parent])
+        sb = render.render_seatbelt(
+            repos, "/Library/Application Support/ClaudeCode")
+        param_line = ('(allow file-write* (subpath (param "%s")))'
+                      % render.OWN_WT_PARAM)
+        self.assertIn(param_line, sb)
+        self.assertEqual(sb.strip().splitlines()[-1], param_line)
+
+    def test_seatbelt_rule_order_deny_before_git_reopen(self):
+        # the repo deny must precede its shared-.git allows, and the ref
+        # denies must come after those allows (re-close inside re-open)
         repos = render.scan_repos([self.parent])
         root = os.path.realpath(self.repo)
         b = repos[0]["head_branch"]
         sb = render.render_seatbelt(
             repos, "/Library/Application Support/ClaudeCode")
         i_deny_repo = sb.index('(deny file-write* (subpath "%s"))' % root)
-        i_allow_wt = sb.index('(subpath "%s/.claude/worktrees"))' % root)
+        i_allow_git = sb.index('(subpath "%s/.git/objects"))' % root)
         i_deny_ref = sb.index('(literal "%s/.git/refs/heads/%s"))' % (root, b))
-        self.assertLess(i_deny_repo, i_allow_wt)
-        self.assertLess(i_allow_wt, i_deny_ref)
+        self.assertLess(i_deny_repo, i_allow_git)
+        self.assertLess(i_allow_git, i_deny_ref)
 
     def test_check_mode_writes_nothing(self):
         settings = os.path.join(self.tmp.name, "ms.json")

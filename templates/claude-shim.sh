@@ -7,6 +7,12 @@
 set -u
 WD="${WARDEN_DEST:-/Library/Application Support/ClaudeCode}/warden"
 PROFILE="$WD/session.sb"
+# Sentinel for sessions not in a worktree: a fixed, never-created path so
+# the parameterized allow grants nothing but the profile still loads
+# (an empty -D value makes Seatbelt reject the whole profile). Must match
+# render.py's absolute rendering of NO_WORKTREE_SENTINEL under the
+# managed dir.
+NO_WT_SENTINEL="$WD/.no-worktree-this-session"
 
 resolve_real() {
   if [ -n "${WARDEN_REAL_CLAUDE:-}" ] && [ -x "$WARDEN_REAL_CLAUDE" ]; then
@@ -43,5 +49,14 @@ if [ ! -f "$PROFILE" ] || ! command -v sandbox-exec >/dev/null 2>&1; then
   exec "$REAL" "$@"
 fi
 
+# SESSION-SCOPED wall: re-open only THIS session's own worktree. The own
+# worktree is the nearest ancestor of cwd whose .git is a FILE (a linked
+# worktree), resolved by the same logic the guard hook uses so the wall
+# and the hook agree. A trunk/root session (no worktree) gets the sentinel
+# — nothing extra is writable, and it must enter a worktree to do work.
+OWN_WT="$(python3 "$WD/session_worktree.py" "$PWD" 2>/dev/null || true)"
+[ -n "$OWN_WT" ] || OWN_WT="$NO_WT_SENTINEL"
+
 export WARDEN_SEATBELT=1
-exec /usr/bin/sandbox-exec -f "$PROFILE" "$REAL" "$@"
+export WARDEN_OWN_WORKTREE="$OWN_WT"
+exec /usr/bin/sandbox-exec -D "WARDEN_OWN_WT=$OWN_WT" -f "$PROFILE" "$REAL" "$@"

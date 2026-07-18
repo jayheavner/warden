@@ -36,7 +36,9 @@ DOCTRINE = (
     "to merge), and any repo this session is not pegged to (never "
     "legitimate, for any reason). Vanilla folders outside repo territory "
     "are freely writable. These denials are by design — do not probe, "
-    "retry, or work around them.")
+    "retry, or work around them. To confirm your isolation is active, run "
+    "`warden verify` (a one-command self-check scoped to THIS session — no "
+    "skill or script hunting needed).")
 
 
 def sentinel_path(managed_root=MANAGED_ROOT_DEFAULT):

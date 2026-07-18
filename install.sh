@@ -11,7 +11,7 @@ WD="$DEST/warden"
 SCAN_HOME="${SUDO_USER:+/Users/$SUDO_USER}"
 SCAN_HOME="${SCAN_HOME:-$HOME}"
 SCAN_DIR="${WARDEN_SCAN_DIR:-$SCAN_HOME/claude}"
-FILES=(guard.py render.py doctor.py landd.py lanes.py userfallback.py selftest.sh uninstall.sh gitconfig-include.sh templates/managed-settings.base.json templates/hookpath.gitconfig)
+FILES=(guard.py render.py doctor.py session_worktree.py landd.py lanes.py userfallback.py selftest.sh uninstall.sh gitconfig-include.sh templates/managed-settings.base.json templates/hookpath.gitconfig)
 
 if [ "${1:-}" = "--print-plan" ]; then
   printf 'would install to %s:\n' "$WD"
@@ -79,19 +79,35 @@ print("policy verified: claude-native sandbox off (warden seatbelt is the "
       "wall), hooks wired")
 EOF
 
-# The wall itself: warden's seatbelt profile, proven live before activation.
-# This runs unsandboxed (we are root in a plain shell) — exactly the context
-# the lab used to prove the profile semantics (tests/lab).
-sandbox-exec -f "$WD/session.sb" /usr/bin/true \
-  || { echo "FATAL: rendered seatbelt profile does not load" >&2; exit 1; }
+# The wall itself, proven live before activation — runs unsandboxed (root,
+# plain shell), the context the lab used to prove profile semantics. The
+# session profile is parameterized: sandbox-exec -D WARDEN_OWN_WT=<wt>
+# re-opens ONE worktree. The smoke test drives that with a live worktree
+# and asserts own-worktree allowed, sibling denied, trunk denied, and home
+# writable — all under one composed session profile.
+SENTINEL="$WD/.no-worktree-this-session"
+sandbox-exec -D "WARDEN_OWN_WT=$SENTINEL" -f "$WD/session.sb" /usr/bin/true \
+  || { echo "FATAL: seatbelt profile does not load (parameterized)" >&2; exit 1; }
 FIRST_REPO="$(python3 -c 'import json,sys;r=json.load(open(sys.argv[1]))["repos"];print(r[0]["root"] if r else "")' "$WD/registry.json")"
 if [ -n "$FIRST_REPO" ]; then
-  if sandbox-exec -f "$WD/session.sb" /usr/bin/touch "$FIRST_REPO/.git/HEAD" 2>/dev/null; then
-    echo "FATAL: seatbelt profile failed to deny a trunk .git write" >&2; exit 1
+  OWN_WT="$(ls -d "$FIRST_REPO"/.claude/worktrees/*/ 2>/dev/null | head -1)"; OWN_WT="${OWN_WT%/}"
+  SIB_WT="$(ls -d "$FIRST_REPO"/.claude/worktrees/*/ 2>/dev/null | sed -n 2p)"; SIB_WT="${SIB_WT%/}"
+  # param = own worktree if we found one, else the sentinel
+  PARAM="${OWN_WT:-$SENTINEL}"
+  se() { sandbox-exec -D "WARDEN_OWN_WT=$PARAM" -f "$WD/session.sb" "$@"; }
+  if se /usr/bin/touch "$FIRST_REPO/.git/HEAD" 2>/dev/null; then
+    echo "FATAL: profile failed to deny a trunk .git write" >&2; exit 1
   fi
-  sandbox-exec -f "$WD/session.sb" /bin/sh -c ": > \"\$HOME/.warden-install-probe\" && rm \"\$HOME/.warden-install-probe\"" \
-    || { echo "FATAL: seatbelt profile over-blocks (home not writable)" >&2; exit 1; }
-  echo "seatbelt verified live: trunk write denied, home write allowed"
+  se /bin/sh -c ": > \"\$HOME/.warden-install-probe\" && rm \"\$HOME/.warden-install-probe\"" \
+    || { echo "FATAL: profile over-blocks (home not writable)" >&2; exit 1; }
+  if [ -n "$OWN_WT" ] && ! se /bin/sh -c ": > \"$OWN_WT/.warden-own-probe\" && rm \"$OWN_WT/.warden-own-probe\"" 2>/dev/null; then
+    echo "FATAL: profile blocks the session's OWN worktree" >&2; exit 1
+  fi
+  if [ -n "$SIB_WT" ] && se /usr/bin/touch "$SIB_WT/.warden-sib-probe" 2>/dev/null; then
+    rm -f "$SIB_WT/.warden-sib-probe"
+    echo "FATAL: profile allowed a SIBLING worktree write — isolation breached" >&2; exit 1
+  fi
+  echo "seatbelt verified live: trunk denied, own worktree allowed${SIB_WT:+, sibling denied}, home allowed"
 fi
 
 # Launcher: sessions must start wrapped. Point ~/.local/bin/claude at the

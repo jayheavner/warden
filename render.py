@@ -68,28 +68,46 @@ CODEX_GIT_CARVEOUTS = ["objects/**", "refs/**", "logs/**", "worktrees/**",
                        "packed-refs", "packed-refs.lock", "FETCH_HEAD"]
 
 
+# The Seatbelt parameter the launcher shim fills with the session's own
+# worktree. When a session is NOT in a worktree, the shim passes a fixed
+# never-created sentinel path instead of an empty value — Seatbelt rejects
+# an empty subpath param and refuses to load the whole profile (lab-proven
+# 2026-07-18: "empty subpath pattern"), which would leave the session
+# ungoverned. The sentinel lives shim-side; the profile only names the
+# parameter.
+OWN_WT_PARAM = "WARDEN_OWN_WT"
+
+
 def render_seatbelt(repos, managed_root, home=None):
     """Warden's own Seatbelt profile — the wall Claude Code's sandbox
-    could not be: filesystem-only. Sessions launch wrapped in this profile
-    (sandbox-exec -f, via the claude shim); every child process inherits
-    it. No network, credential, or process rules exist here, so nothing
-    but the listed writes is touched — Warden blocks zero networking and
-    zero commands. The profile is loaded from a file, so rule count has
-    no ARG_MAX ceiling.
+    could not be: filesystem-only. Static and root-owned; the launcher
+    shim applies it with `sandbox-exec -D WARDEN_OWN_WT=<path> -f`, where
+    <path> is the launching session's own worktree. Every child process
+    inherits it. No network, credential, or process rules exist — Warden
+    blocks zero networking and zero commands. Loaded from a file, so rule
+    count has no ARG_MAX ceiling.
 
-    Rule order is load-bearing: Seatbelt is last-match-wins (proven in
-    tests/lab, EVIDENCE-2026-07-16). Per repo: deny the whole checkout,
-    re-open the worktree container and the shared-.git write set inside
-    it, then re-close the protected HEAD-branch refs inside those allows.
-    Trunk's .git/index, HEAD, config, and hooks stay denied by the root
-    deny — the hook-neutralization hole is closed by prevention."""
+    SESSION-SCOPED isolation: the profile denies every repo checkout AND
+    every worktree (the worktrees container is NOT blanket-re-opened —
+    that let one session write a sibling's tree). Instead a single
+    parameterized allow, `(subpath (param "WARDEN_OWN_WT"))`, re-opens
+    exactly the one worktree the shim names for THIS session. Seatbelt is
+    last-match-wins (tests/lab, EVIDENCE-2026-07-16), so that per-session
+    allow overrides the repo deny for one worktree only; siblings stay
+    denied. The shared-.git write set that any session needs for commits
+    is re-opened for all, with protected HEAD-branch refs re-closed inside
+    it; .git/worktrees carries per-worktree git metadata, not source, so
+    sharing it does not breach tree isolation.
+
+    The parameterized allow is placed LAST so it wins over the repo denies
+    above it. It is a no-op grant (the sentinel path) for trunk sessions."""
     lines = ["(version 1)", "(allow default)",
              '(deny file-write* (subpath "%s"))' % managed_root]
     for r in repos:
         root = r["root"]
+        # deny the whole checkout INCLUDING every worktree; the session's
+        # own worktree is re-opened by the parameterized allow at the end
         lines.append('(deny file-write* (subpath "%s"))' % root)
-        lines.append('(allow file-write* (subpath "%s/.claude/worktrees"))'
-                     % root)
         for sub in ["objects", "refs", "logs", "worktrees"]:
             lines.append('(allow file-write* (subpath "%s/.git/%s"))'
                          % (root, sub))
@@ -106,6 +124,8 @@ def render_seatbelt(repos, managed_root, home=None):
         for lit in [".claude/settings.json", ".claude/settings.local.json"]:
             lines.append('(deny file-write* (literal "%s/%s"))'
                          % (home, lit))
+    # LAST: re-open only THIS session's own worktree (shim fills the param)
+    lines.append('(allow file-write* (subpath (param "%s")))' % OWN_WT_PARAM)
     return "\n".join(lines) + "\n"
 
 # Write scope is deny-only: warden never enumerates the directories tools

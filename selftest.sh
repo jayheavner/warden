@@ -15,7 +15,7 @@ else
   rm -f "${TMPDIR:-/tmp}/.warden-tmpprobe.$$"
 fi
 set -u
-WD="/Library/Application Support/ClaudeCode/warden"
+WD="${WARDEN_DEST:-/Library/Application Support/ClaudeCode}/warden"
 REG="$WD/registry.json"
 PASSN=0; FAILN=0; SKIPN=0
 say()  { printf '%-6s %-52s %s\n' "$1" "$2" "${3:-}"; }
@@ -35,11 +35,11 @@ if [ "${WARDEN_ACTIVE:-}" != "1" ]; then
 fi
 [ -r "$REG" ] || { echo "warden selftest: no registry at $REG"; exit 3; }
 
-REPO=$(python3 -c 'import json,sys;r=json.load(open(sys.argv[1]))["repos"];print(r[0]["root"] if r else "")' "$REG")
-BRANCH=$(python3 -c 'import json,sys;r=json.load(open(sys.argv[1]))["repos"];print(r[0]["head_branch"] or "")' "$REG")
-[ -n "$REPO" ] || { echo "warden selftest: registry has no repos"; exit 3; }
-
 CWD=$(pwd -P)
+# Anchor every probe to THIS session's own worktree and the repo that
+# contains it — the only question that matters is "is THIS session
+# isolated?", not "is registry[0] isolated?" (the old fixed-index probe
+# reported against an unrelated repo and produced false T4 findings).
 OWN_WT=$(python3 - "$CWD" <<'EOF'
 import sys
 p = sys.argv[1]
@@ -50,9 +50,42 @@ else:
     print("")
 EOF
 )
+# The session's own repo: the shared checkout that owns OWN_WT if we're in
+# a worktree, else the repo whose tree contains cwd, else registry[0] with
+# a loud note (a session not inside any adopted repo can't self-probe).
+REPO=$(python3 - "$REG" "$CWD" "$OWN_WT" <<'EOF'
+import json, os, sys
+reg = json.load(open(sys.argv[1])); cwd = sys.argv[2]; own = sys.argv[3]
+roots = [r["root"] for r in reg["repos"]]
+anchor = own.split("/.claude/worktrees/")[0] if own else cwd
+# nearest adopted repo root that is an ancestor of the anchor
+best = ""
+for root in roots:
+    if anchor == root or anchor.startswith(root.rstrip("/") + "/"):
+        if len(root) > len(best):
+            best = root
+print(best or (roots[0] if roots else ""))
+EOF
+)
+[ -n "$REPO" ] || { echo "warden selftest: registry has no repos"; exit 3; }
+BRANCH=$(python3 - "$REG" "$REPO" <<'EOF'
+import json, sys
+reg = json.load(open(sys.argv[1]))
+for r in reg["repos"]:
+    if r["root"] == sys.argv[2]:
+        print(r.get("head_branch") or ""); break
+EOF
+)
+# Warn if the probed repo isn't the session's own (session started outside
+# any adopted repo) — the results then describe registry[0], not you.
+ANCHOR_ROOT=$(python3 -c 'import sys;print(sys.argv[1].split("/.claude/worktrees/")[0] if sys.argv[1] else sys.argv[2])' "$OWN_WT" "$CWD")
+if [ "$REPO" != "$ANCHOR_ROOT" ]; then
+  echo "== NOTE: this session is not inside an adopted repo; probing $REPO"
+  echo "==       (a fallback) — results describe that repo, not this session."
+fi
 
 echo "== warden selftest: session cwd=$CWD"
-echo "== probing shared checkout: $REPO (HEAD branch: ${BRANCH:-detached})"
+echo "== probing this session's repo: $REPO (HEAD branch: ${BRANCH:-detached})"
 echo
 
 # T1: mutation at shared root (sentinel file; harmless and removed if it lands)
@@ -88,11 +121,15 @@ else
   skip "T3b update-ref on shared HEAD branch" "detached HEAD"
 fi
 
-# T4: sibling worktree write
-SIB=$(python3 - "$REG" "$OWN_WT" <<'EOF'
+# T4: sibling worktree write — a sibling IN THIS SESSION'S OWN REPO (a
+# different repo's worktree is not a meaningful isolation probe). This is
+# the exact case the sibling-worktree fix closes.
+SIB=$(python3 - "$REG" "$OWN_WT" "$REPO" <<'EOF'
 import json, sys
-reg = json.load(open(sys.argv[1])); own = sys.argv[2]
+reg = json.load(open(sys.argv[1])); own = sys.argv[2]; repo = sys.argv[3]
 for r in reg["repos"]:
+    if r["root"] != repo:
+        continue
     for w in r["worktrees"]:
         if w != own:
             print(w); raise SystemExit

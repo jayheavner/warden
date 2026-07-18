@@ -343,7 +343,11 @@ EOF
     shift || true
     exec python3 "$WD/doctor.py" "$@"
     ;;
-  selftest)
+  verify|selftest)
+    # `warden verify` is the discoverable handle a session reaches for
+    # first (named in the session-start banner); `selftest` is its alias.
+    # Both run the session-anchored checks: probes target THIS session's
+    # own repo/worktree, derived from cwd, not a fixed registry index.
     exec bash "$WD/selftest.sh"
     ;;
   verify-claude)
@@ -578,7 +582,7 @@ EOF
     exit "$STATUS_RC"
     ;;
   *)
-    echo "usage: warden {disable|enable|refresh|land [branch]|remote add <name> <url>|forget <repo>|doctor [path]|selftest|verify-claude|codex-selftest|status}" >&2
+    echo "usage: warden {verify|disable|enable|refresh|land [branch]|remote add <name> <url>|forget <repo>|doctor [path]|selftest|verify-claude|codex-selftest|status}" >&2
     exit 2
     ;;
 esac

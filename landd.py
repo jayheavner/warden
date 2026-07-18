@@ -37,15 +37,23 @@ def classify_push_failure(porcelain, stderr):
     pattern match. Ambiguity -> 'other': a wrong ordinary rejection costs
     one retry; a wrong lesson silently changes a repo's behavior forever.
     """
+    return classify_push_failure_ex(porcelain, stderr)[0]
+
+
+def classify_push_failure_ex(porcelain, stderr):
+    """(kind, marker): kind as above; marker is the curated pattern that
+    matched (for 'policy'), else "". The marker lets callers store a
+    deterministic lesson that never depends on transcript truncation."""
     rejected = [l for l in porcelain.splitlines() if l.startswith("!")]
     if not rejected:
-        return "other"
+        return "other", ""
     text = (porcelain + "\n" + stderr).lower()
     if "non-fast-forward" in text or "fetch first" in text:
-        return "nonff"
-    if any(p in text for p in POLICY_PATTERNS):
-        return "policy"
-    return "other"
+        return "nonff", ""
+    for p in POLICY_PATTERNS:
+        if p in text:
+            return "policy", p
+    return "other", ""
 REGISTRIES = ["/Library/Application Support/ClaudeCode/warden/registry.json",
               "/etc/codex/warden/registry.json"]
 
@@ -229,10 +237,13 @@ def _land_push(repo, branch, sha, res, demote):
     rc, out, errs = _git(repo, "push", "--porcelain", remote,
                          "%s:refs/heads/%s" % (sha, db), demote=demote)
     if rc != 0:
-        kind = classify_push_failure(out, errs)
+        kind, marker = classify_push_failure_ex(out, errs)
         if kind == "policy":
+            # store the matched marker FIRST so the lesson deterministically
+            # records why (a raw transcript can truncate before the marker,
+            # since git interleaves porcelain and remote stderr unpredictably)
             return {"verdict": "policy-denied",
-                    "evidence": (out + " " + errs)[:300]}
+                    "evidence": ("%s | %s" % (marker, (errs or out)))[:300]}
         if kind == "nonff":
             return {"status": "rejected",
                     "reason": "%s moved during landing; land again to retry "

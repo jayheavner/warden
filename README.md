@@ -63,8 +63,9 @@ sudo /etc/codex/warden/uninstall-codex.sh                           # Codex
 ## Usage
 
 ```sh
+warden verify                    # one-command self-check for THIS session (run it from a session)
 warden status                    # resolved lane per repo, daemon and refresh health
-warden selftest                  # Claude Code acceptance suite (run it from a session)
+warden selftest                  # alias for `warden verify` — session-anchored acceptance suite
 warden codex-selftest            # Codex acceptance suite (run it from a session)
 sudo warden refresh              # re-derive policy after cloning or restructuring repos
 warden land <branch>             # integrate finished work (see Integration lanes)

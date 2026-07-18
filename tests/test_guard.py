@@ -177,3 +177,8 @@ class TestDoctrineMessages(unittest.TestCase):
         for phrase in ["branch", "trunk", "warden land", "not pegged",
                        "Vanilla folders"]:
             self.assertIn(phrase, d)
+
+    def test_doctrine_names_the_verify_command(self):
+        # a session must be TOLD how to self-check, so it never has to
+        # reverse-engineer the invocation (the selftest-ramble incident)
+        self.assertIn("warden verify", guard.DOCTRINE % "/x")

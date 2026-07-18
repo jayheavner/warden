@@ -10,9 +10,12 @@ job, not a bug. The full derivation lives in
 **This document is not allowed to rot.** Every entry is a *design
 invariant* enforced by a named test or selftest probe that fails if the
 entry is violated: T17 (deny-only, no allow-list), T20 (network
-unrestricted), T21 (session actually wrapped in the wall), the
-`tests/lab/probe-session-profile.sh` live wall proof, and the guard/render
-unit suites. An entry with no test is a defect in this document. Harness
+unrestricted), T21 (session actually wrapped in the wall), T4
+(sibling-worktree write denied, anchored to the session's own repo), the
+`tests/lab/probe-session-profile.sh` live wall proof (own-worktree
+allowed, sibling denied, trunk denied, network free), and the
+guard/render unit suites. An entry with no test is a defect in this
+document. Harness
 constraints that were once open (native-sandbox limitations) are retired
 in [upstream-asks.md](upstream-asks.md), which also records the one
 watched durability risk (`sandbox-exec` deprecation) and its detector.
@@ -43,13 +46,22 @@ watched durability risk (`sandbox-exec` deprecation) and its detector.
   does (2026-07-17: a curated carve-out list silently blocked the Azure CLI
   and global agent memory). The wall is a Seatbelt profile that **allows by
   default** and denies only what Warden protects: per repo, the whole
-  shared checkout (with the session's worktree and the shared-`.git` write
-  set re-opened inside it, and the protected HEAD-branch refs re-closed
-  inside those), plus the managed root and the governance files. This
-  allow-inside-deny nesting is what Claude Code's settings compiler could
-  not express and raw Seatbelt can (proven in `tests/lab`, 66 recorded
-  passes) — so the wall is now byte-level, not judgment-level: a session's
-  shell physically cannot write another repo's tree or tamper with
+  shared checkout AND every worktree, with the shared-`.git` write set
+  re-opened inside it and the protected HEAD-branch refs re-closed inside
+  those, plus the managed root and the governance files. The one worktree
+  a session may write — **its own** — is re-opened by a per-session
+  parameter: the launcher shim passes
+  `sandbox-exec -D WARDEN_OWN_WT=<this session's worktree>`, and the
+  profile's final rule is `(allow file-write* (subpath (param ...)))`.
+  Because the base denies every worktree and only the parameter re-opens
+  one, **no session can write a sibling session's worktree** — a static
+  machine-wide profile cannot express that (it can't tell sessions apart);
+  the parameter is the per-session input that can. This allow-inside-deny
+  nesting is what Claude Code's settings compiler could not express and raw
+  Seatbelt can (proven in `tests/lab`, 66 recorded passes; the parameter
+  and its empty-value failure mode proven 2026-07-18) — so the wall is
+  byte-level, not judgment-level: a session's shell physically cannot write
+  another repo's tree, a sibling's worktree, or tamper with
   `.git/config`/hooks. The Codex render carries the same invariant through
   its own expressive filesystem map. **The rule for future work: a blocked
   tool is never fixed by extending an allow list — there is no allow list.

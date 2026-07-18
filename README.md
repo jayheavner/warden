@@ -84,12 +84,17 @@ Warden enforces in layers, so no single bypass defeats it:
 
 | Layer | Mechanism | Covers |
 |---|---|---|
-| Sandbox | Root-owned managed settings turn on Claude Code's native sandbox with a rendered deny-write list | Every Bash write, however addressed — cwd, `cd`, `-C`, absolute paths, redirection, subprocesses |
+| Seatbelt wall | Sessions launch wrapped in Warden's own macOS Seatbelt profile (`sandbox-exec`, via the `claude` shim). Claude Code's native sandbox is **off** — it can't be filesystem-only without breaking every tool's network and keychain | Every Bash write, however addressed — cwd, `cd`, `-C`, absolute paths, redirection, subprocesses. Blocks **only** filesystem writes to protected paths: zero network rules, zero command blocks |
 | Tool guard | A non-removable `PreToolUse` hook classifies write targets | `Edit` / `Write` / `NotebookEdit`, with loud deny reasons |
-| Policy | Policy is derived only from on-disk repo state | Present and future repos, machine-wide |
+| Git-ref hook | Machine-wide `reference-transaction` hook (rides on git itself) | Branch moves/deletes at shared checkouts, even from headless or pre-install sessions |
+| Policy | Derived only from on-disk repo state | Present and future repos, machine-wide |
 | Audit | Unified log plus `~/.claude/warden/audit.jsonl` | Attribution: timestamp, session, cwd, tool, target, verdict, rule |
 
-Bash writes are never judged by parsing command text — the sandbox observes
+Because the wall is Warden's own profile, not Claude Code's native
+sandbox, a governed session's network, credentials, and non-repo
+filesystem are exactly what an ungoverned shell sees — `gh`, `git`, and
+every other tool work normally. Bash writes are never judged by parsing
+command text — Seatbelt observes
 the actual filesystem operations, so obfuscated paths and subshells can't slip
 past.
 

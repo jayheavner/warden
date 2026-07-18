@@ -17,31 +17,29 @@ MANAGED = os.environ.get("WARDEN_DEST",
                          "/Library/Application Support/ClaudeCode")
 CODEX_REQ = os.environ.get("WARDEN_CODEX_REQ", "/etc/codex/requirements.toml")
 
-# The Claude Code version the sandbox constraints in docs/limitations.md
-# and docs/upstream-asks.md were last proven on. When the installed
-# version moves, those constraints are unverified claims until the lab
-# probes re-prove them (or show an upstream fix landed and warden's
-# design should upgrade).
-PROVEN_ON_CLAUDE = "2.1.212"
+# Warden's wall is its own Seatbelt profile applied by the launcher shim,
+# so the wall is independent of the Claude Code version. What a version
+# move CAN break is the shim's ability to find the real binary (handled by
+# re-resolution) and, in the worst case, sandbox-exec availability. This
+# check confirms the shim is still resolving to a real binary.
 
 
-def version_drift(current, pinned=PROVEN_ON_CLAUDE):
-    """Advisory text when the harness version left the proven pin, else
-    None. `current` is `claude --version` output, e.g. '2.1.212 (...)'."""
-    cur = (current or "").split()[0] if (current or "").strip() else ""
-    if not cur:
-        return ("claude CLI not found — the version the sandbox "
-                "constraints were proven on (%s) cannot be checked."
-                % pinned)
-    if cur == pinned:
-        return None
-    return ("Claude Code is %s but the documented sandbox constraints "
-            "were proven on %s. Re-verify before trusting them: run "
-            "tests/lab/probe-write-precedence.sh from a plain terminal — "
-            "if it reports RETIRED, an upstream fix landed and warden "
-            "should upgrade to byte-level tree freeze (see "
-            "docs/upstream-asks.md); if STANDS, update PROVEN_ON_CLAUDE "
-            "in doctor.py to %s." % (cur, pinned, cur))
+def launcher_drift(shim_target, resolved_real):
+    """Advisory text when the launcher governance looks broken, else None.
+    shim_target: readlink of ~/.local/bin/claude. resolved_real: the path
+    the shim would exec (from claude-real or version auto-resolve)."""
+    if shim_target is None:
+        return ("claude launcher not found — sessions may start ungoverned; "
+                "run: sudo ./install.sh")
+    if not shim_target.endswith("/claude-shim"):
+        return ("claude launcher does NOT point at warden's shim (points at "
+                "%s) — new sessions start WITHOUT warden's wall; run: "
+                "sudo ./install.sh" % shim_target)
+    if not resolved_real:
+        return ("warden shim is installed but cannot resolve the real claude "
+                "binary — sessions will fail to launch; set WARDEN_REAL_CLAUDE "
+                "or reinstall")
+    return None
 
 
 def _home():
@@ -69,6 +67,28 @@ def sandbox_verdict(target, fs):
     return "default", ""
 
 
+SEATBELT_RE = None
+
+
+def seatbelt_verdict(target, profile_text):
+    """(verdict, rule) for a write at target under warden's seatbelt
+    profile. Seatbelt is last-match-wins: scan rules in order, remember
+    the final match. No match means the profile's (allow default)."""
+    import re
+    global SEATBELT_RE
+    if SEATBELT_RE is None:
+        SEATBELT_RE = re.compile(
+            r'\((allow|deny) file-write\* \((subpath|literal) "([^"]+)"\)\)')
+    verdict, rule = "allow", "(allow default)"
+    for m in SEATBELT_RE.finditer(profile_text):
+        action, kind, path = m.groups()
+        hit = (target == path or
+               (kind == "subpath" and target.startswith(path + os.sep)))
+        if hit:
+            verdict, rule = action, m.group(0)
+    return verdict, rule
+
+
 def codex_verdict(target, rules):
     """Most-specific matching rule in the codex map (glob, specific wins)."""
     import fnmatch
@@ -91,7 +111,22 @@ def explain_path(raw):
               "is not installed; warden does not restrict this path."
               % MANAGED)
         ms = None
-    if ms:
+    sb_path = os.path.join(MANAGED, "warden", "session.sb")
+    try:
+        profile = open(sb_path).read()
+    except OSError:
+        profile = None
+    if profile is not None:
+        v, rule = seatbelt_verdict(t, profile)
+        if v == "deny":
+            print("  warden wall (seatbelt): DENIED — %s — this is a "
+                  "protected surface; the command itself still runs, only "
+                  "this write bounces." % rule)
+        else:
+            print("  warden wall (seatbelt): write allowed (%s). Warden "
+                  "touches nothing else — no network, credential, or "
+                  "command rules exist." % rule)
+    elif ms and ms.get("sandbox", {}).get("enabled"):
         v, rule = sandbox_verdict(t, ms.get("sandbox", {})
                                        .get("filesystem", {}))
         if v == "deny":
@@ -224,15 +259,26 @@ def main(argv=None):
               "sessions." % since)
     else:
         print("state: enabled")
-    import subprocess
+    # launcher governance: the shim is the enforcement handle
+    launcher = os.path.expanduser("~/.local/bin/claude")
     try:
-        cur = subprocess.run(["claude", "--version"], capture_output=True,
-                             text=True, timeout=10).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        cur = ""
-    drift = version_drift(cur)
-    if drift:
-        print("version drift: " + drift)
+        target = os.readlink(launcher)
+    except OSError:
+        target = None
+    real = None
+    cr = os.path.join(MANAGED, "warden", "claude-real")
+    try:
+        real = open(cr).read().strip()
+    except OSError:
+        vers = os.path.expanduser("~/.local/share/claude/versions")
+        try:
+            real = sorted((os.path.join(vers, v) for v in os.listdir(vers)),
+                          reverse=True)[0]
+        except (OSError, IndexError):
+            real = None
+    drift = launcher_drift(target, real)
+    print("launcher: %s" % (drift or "governed (sessions wrap in warden's "
+                            "seatbelt)"))
     dirty_shared_checkouts()
     recent_denials()
     return 0

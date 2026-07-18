@@ -27,9 +27,25 @@ committing straight to trunk.
    territory stays writable. Policy derives only from repo structure on
    disk — Warden never enumerates what tools may write, so a new tool never
    requires a Warden change.
-5. **Enforcement is structural, layered, non-optional for sessions:** OS
-   sandbox, non-removable hooks, the git-ref hook, root-owned rendered
-   policy. Convention and prose count for nothing.
+5. **Enforcement is structural, layered, non-optional for sessions:**
+   Warden's own macOS Seatbelt profile (applied at session launch by the
+   `claude` shim), non-removable hooks, the git-ref hook, root-owned
+   rendered policy. Convention and prose count for nothing.
+
+   **Warden blocks zero networking and zero commands** (invariant, selftest
+   T20). Every command runs and reaches the network exactly as an
+   ungoverned shell would; the wall denies only filesystem *writes* to
+   protected surfaces. Warden delivers its own Seatbelt profile rather than
+   enabling Claude Code's native sandbox precisely because the native
+   sandbox cannot be filesystem-only — it forces a network proxy that
+   breaks `gh`/Node TLS and denies keychain writes, with no off switch
+   (proven 2026-07-18; see [upstream-asks.md](upstream-asks.md)).
+
+   **No enforcement mechanism is adopted without its full side-effect
+   surface inventoried against these goals** (the rule learned from the
+   native-sandbox episode: it was adopted as a filesystem firewall, but its
+   network/credential side effects were discovered incident by incident in
+   production).
 6. **Fail-closed for the repos, never fail-broken for the machine.** Walls
    state their rule and the sanctioned path when they fire; every denial is
    explainable in one command (`warden doctor`); the disable failsafe

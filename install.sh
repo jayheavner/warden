@@ -63,21 +63,55 @@ python3 "$WD/render.py" \
   --base "$WD/managed-settings.base.json" \
   --write-settings "$DEST/managed-settings.json" \
   --write-registry "$WD/registry.json" \
-  --write-gitconfig "$WD/warden.gitconfig"
+  --write-gitconfig "$WD/warden.gitconfig" \
+  --write-seatbelt "$WD/session.sb"
 
 chown -R root:wheel "$DEST"
 chmod 0755 "$DEST" "$WD"
-chmod 0644 "$DEST/managed-settings.json" "$WD/registry.json" "$WD/warden.gitconfig"
+chmod 0644 "$DEST/managed-settings.json" "$WD/registry.json" "$WD/warden.gitconfig" "$WD/session.sb"
 
 python3 - "$DEST/managed-settings.json" <<'EOF'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["sandbox"]["enabled"] and d["sandbox"]["failIfUnavailable"]
-assert d["sandbox"]["allowUnsandboxedCommands"] is False
+assert d["sandbox"]["enabled"] is False, "claude-native sandbox must be OFF"
 assert d["hooks"]["PreToolUse"], "hooks missing"
-print("policy verified: sandbox fail-closed, hooks wired,",
-      len(d["sandbox"]["filesystem"]["denyWrite"]), "denyWrite entries")
+print("policy verified: claude-native sandbox off (warden seatbelt is the "
+      "wall), hooks wired")
 EOF
+
+# The wall itself: warden's seatbelt profile, proven live before activation.
+# This runs unsandboxed (we are root in a plain shell) — exactly the context
+# the lab used to prove the profile semantics (tests/lab).
+sandbox-exec -f "$WD/session.sb" /usr/bin/true \
+  || { echo "FATAL: rendered seatbelt profile does not load" >&2; exit 1; }
+FIRST_REPO="$(python3 -c 'import json,sys;r=json.load(open(sys.argv[1]))["repos"];print(r[0]["root"] if r else "")' "$WD/registry.json")"
+if [ -n "$FIRST_REPO" ]; then
+  if sandbox-exec -f "$WD/session.sb" /usr/bin/touch "$FIRST_REPO/.git/HEAD" 2>/dev/null; then
+    echo "FATAL: seatbelt profile failed to deny a trunk .git write" >&2; exit 1
+  fi
+  sandbox-exec -f "$WD/session.sb" /bin/sh -c ": > \"\$HOME/.warden-install-probe\" && rm \"\$HOME/.warden-install-probe\"" \
+    || { echo "FATAL: seatbelt profile over-blocks (home not writable)" >&2; exit 1; }
+  echo "seatbelt verified live: trunk write denied, home write allowed"
+fi
+
+# Launcher: sessions must start wrapped. Point ~/.local/bin/claude at the
+# root-owned shim; record the real binary for the shim and for uninstall.
+FB_HOME="${SUDO_USER:+/Users/$SUDO_USER}"; FB_HOME="${FB_HOME:-$HOME}"
+install -m 0755 "$SRC/templates/claude-shim.sh" "$WD/claude-shim"
+LAUNCHER="$FB_HOME/.local/bin/claude"
+if [ -e "$LAUNCHER" ]; then
+  REAL="$(readlink "$LAUNCHER" || true)"
+  if [ -n "$REAL" ] && [ "$REAL" != "$WD/claude-shim" ]; then
+    printf '%s' "$REAL" > "$WD/claude-real"
+    chmod 0644 "$WD/claude-real"
+  fi
+  ln -sfn "$WD/claude-shim" "$LAUNCHER"
+  [ -n "${SUDO_USER:-}" ] && chown -h "$SUDO_USER" "$LAUNCHER" || true
+  echo "launcher governed: $LAUNCHER -> warden shim -> $(cat "$WD/claude-real" 2>/dev/null || echo '(version auto-resolve)')"
+else
+  echo "WARNING: no claude launcher at $LAUNCHER — sessions will start ungoverned."
+  echo "  Launch governed sessions via: \"$WD/claude-shim\""
+fi
 
 # Enterprise-override stopgap: on Claude Enterprise accounts the remote org
 # policy replaces the policySettings layer, silently discarding the file we

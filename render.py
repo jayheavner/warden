@@ -45,46 +45,20 @@ def scan_repos(parents):
     return repos
 
 
-# ceiling on rendered filesystem rules: the generated sandbox profile is
-# passed as a single exec argument, and past roughly 400 rules it exceeds
-# the OS ARG_MAX limit and every Bash spawn fails with E2BIG
-MAX_FS_RULES_DEFAULT = 250
-
 
 def render_settings(base, repos, managed_root):
+    """Claude Code managed settings: hooks + env only. The filesystem wall
+    is NOT delivered here — Claude Code's native sandbox cannot be made
+    filesystem-only (it forces a network proxy that breaks gh/Node TLS and
+    denies keychain writes), so warden ships `sandbox.enabled: false` and
+    the wall is warden's own Seatbelt profile (render_seatbelt), applied
+    by the launcher shim. This function only carries the base through and
+    guarantees the native sandbox stays off."""
     out = json.loads(json.dumps(base))
-    fs = out.setdefault("sandbox", {}).setdefault("filesystem", {})
-    deny = fs.setdefault("denyWrite", [])
-    deny.append(managed_root)
-    for r in repos:
-        root = r["root"]
-        # Freeze the shared checkout's git identity and enforcement config
-        # only. The tracked tree is deliberately NOT enumerated: per-file
-        # denies blew the profile past ARG_MAX (E2BIG bricked every Bash
-        # spawn at 18 repos), and a root-level deny is unusable because a
-        # write deny always beats any allow beneath it — it would freeze
-        # the repo's worktrees and the shared-.git writes their git ops
-        # need. Tree protection comes from the sandbox's cwd-scoped write
-        # allowance plus the guard's shared-root Bash denial (rule I4);
-        # commits and ref moves against the shared checkout stay
-        # impossible everywhere via the denies below.
-        deny += [root + "/.git/index", root + "/.git/HEAD",
-                 root + "/.git/config", root + "/.git/hooks",
-                 root + "/.git/info", root + "/.claude/settings.json"]
-        if r["head_branch"]:
-            ref = root + "/.git/refs/heads/" + r["head_branch"]
-            deny += [ref, ref + ".lock",
-                     root + "/.git/logs/refs/heads/" + r["head_branch"]]
-    fs["denyWrite"] = sorted(set(deny))
-    limit = int(os.environ.get("WARDEN_MAX_FS_RULES", MAX_FS_RULES_DEFAULT))
-    total = len(fs["denyWrite"]) + len(fs.get("allowWrite", []))
-    if total > limit:
-        raise SystemExit(
-            "render: %d filesystem rules exceed the safe limit of %d — a "
-            "profile this large fails every Bash spawn with E2BIG. Reduce "
-            "the repos under the scan dir(s) or raise WARDEN_MAX_FS_RULES "
-            "only if a live session has proven the larger profile execs."
-            % (total, limit))
+    out.setdefault("sandbox", {})["enabled"] = False
+    out["sandbox"].pop("filesystem", None)
+    out["sandbox"].pop("failIfUnavailable", None)
+    out["sandbox"].pop("allowUnsandboxedCommands", None)
     return out
 
 
@@ -92,6 +66,47 @@ def render_settings(base, repos, managed_root):
 # (lab-proven carve-out set; also fixes upstream codex worktree-commit bug)
 CODEX_GIT_CARVEOUTS = ["objects/**", "refs/**", "logs/**", "worktrees/**",
                        "packed-refs", "packed-refs.lock", "FETCH_HEAD"]
+
+
+def render_seatbelt(repos, managed_root, home=None):
+    """Warden's own Seatbelt profile — the wall Claude Code's sandbox
+    could not be: filesystem-only. Sessions launch wrapped in this profile
+    (sandbox-exec -f, via the claude shim); every child process inherits
+    it. No network, credential, or process rules exist here, so nothing
+    but the listed writes is touched — Warden blocks zero networking and
+    zero commands. The profile is loaded from a file, so rule count has
+    no ARG_MAX ceiling.
+
+    Rule order is load-bearing: Seatbelt is last-match-wins (proven in
+    tests/lab, EVIDENCE-2026-07-16). Per repo: deny the whole checkout,
+    re-open the worktree container and the shared-.git write set inside
+    it, then re-close the protected HEAD-branch refs inside those allows.
+    Trunk's .git/index, HEAD, config, and hooks stay denied by the root
+    deny — the hook-neutralization hole is closed by prevention."""
+    lines = ["(version 1)", "(allow default)",
+             '(deny file-write* (subpath "%s"))' % managed_root]
+    for r in repos:
+        root = r["root"]
+        lines.append('(deny file-write* (subpath "%s"))' % root)
+        lines.append('(allow file-write* (subpath "%s/.claude/worktrees"))'
+                     % root)
+        for sub in ["objects", "refs", "logs", "worktrees"]:
+            lines.append('(allow file-write* (subpath "%s/.git/%s"))'
+                         % (root, sub))
+        for lit in ["packed-refs", "packed-refs.lock", "FETCH_HEAD"]:
+            lines.append('(allow file-write* (literal "%s/.git/%s"))'
+                         % (root, lit))
+        if r["head_branch"]:
+            ref = root + "/.git/refs/heads/" + r["head_branch"]
+            for lit in [ref, ref + ".lock",
+                        root + "/.git/logs/refs/heads/" + r["head_branch"]]:
+                lines.append('(deny file-write* (literal "%s"))' % lit)
+    if home:
+        home = home.rstrip("/")
+        for lit in [".claude/settings.json", ".claude/settings.local.json"]:
+            lines.append('(deny file-write* (literal "%s/%s"))'
+                         % (home, lit))
+    return "\n".join(lines) + "\n"
 
 # Write scope is deny-only: warden never enumerates the directories tools
 # may write — any such list is stale the day a new tool appears (proven
@@ -202,6 +217,7 @@ def main(argv=None):
     ap.add_argument("--managed-root", default=None)
     ap.add_argument("--format", choices=["claude", "codex"], default="claude")
     ap.add_argument("--write-gitconfig")
+    ap.add_argument("--write-seatbelt")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--disabled", action="store_true")
     a = ap.parse_args(argv)
@@ -233,9 +249,9 @@ def main(argv=None):
         return 0
     base = json.load(open(a.base))
     settings = render_settings(base, repos, a.managed_root)
-    if a.disabled:
-        settings["sandbox"]["enabled"] = False
-        settings["sandbox"]["failIfUnavailable"] = False
+    # sandbox is already off in both states; on disable, the guard hook
+    # reads the DISABLED sentinel and the shim skips the seatbelt, so the
+    # settings shape does not change between enabled and disabled here.
     gitconfig = render_gitconfig(repos, a.managed_root)
     if a.check:
         print(json.dumps({"settings": settings, "registry": registry,
@@ -244,11 +260,20 @@ def main(argv=None):
         return 0
     if a.write_gitconfig:
         _atomic_write_text(a.write_gitconfig, gitconfig)
+    if a.write_seatbelt:
+        # disabled render still writes a valid allow-everything profile:
+        # the shim also checks the sentinel, but a stale profile must
+        # never be the thing that re-imposes walls after a disable
+        sb = ("(version 1)\n(allow default)\n" if a.disabled else
+              render_seatbelt(repos, a.managed_root,
+                              home=scan_owner_home(a.scan)))
+        _atomic_write_text(a.write_seatbelt, sb)
     _atomic_write(a.write_settings, settings)
     _atomic_write(a.write_registry, registry)
-    print("wrote %s (%d repos, %d denyWrite entries)" % (
-        a.write_settings, len(repos),
-        len(settings["sandbox"]["filesystem"]["denyWrite"])))
+    sb_rules = (render_seatbelt(repos, a.managed_root).count("file-write*")
+                if a.write_seatbelt and not a.disabled else 0)
+    print("wrote %s (%d repos, %d seatbelt filesystem rules, native sandbox off)"
+          % (a.write_settings, len(repos), sb_rules))
     return 0
 
 

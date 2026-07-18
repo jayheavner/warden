@@ -28,11 +28,15 @@ out="$(bash "$SRC/bin/warden" disable)"; rc=$?
 [ -f "$WD/DISABLED" ] && pass "sentinel exists" || fail "sentinel exists"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert "disabled_at" in d' \
   "$WD/DISABLED" 2>/dev/null && pass "sentinel parses with disabled_at" || fail "sentinel parses with disabled_at"
+# native sandbox is off in BOTH states (warden's seatbelt is the wall);
+# disable is expressed by the DISABLED sentinel + an allow-everything
+# seatbelt profile, which the shim honors
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["sandbox"]["enabled"] is False' \
   "$WARDEN_DEST/managed-settings.json" 2>/dev/null && pass "sandbox disabled" || fail "sandbox disabled"
+grep -q "deny file-write" "$WD/session.sb" && fail "disabled seatbelt has no walls" || pass "disabled seatbelt has no walls"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["hooks"]["PreToolUse"]' \
   "$WARDEN_DEST/managed-settings.json" 2>/dev/null && pass "hooks kept" || fail "hooks kept"
-python3 -c 'import json,sys; u=json.load(open(sys.argv[1])); assert u["sandbox"]["enabled"] is False and u["env"]["WARDEN_ACTIVE"]=="1"' \
+python3 -c 'import json,sys; u=json.load(open(sys.argv[1])); assert u["env"]["WARDEN_ACTIVE"]=="1"' \
   "$WARDEN_USER_SETTINGS" 2>/dev/null && pass "fallback disabled render" || fail "fallback disabled render"
 echo "$out" | grep -q "warden is DISABLED" && pass "disable banner text" || fail "disable banner text" "$out"
 echo "$out" | grep -q "stay sandboxed until those sessions restart" && pass "disable stale-session note" || fail "disable stale-session note" "$out"
@@ -52,10 +56,11 @@ echo "$out" | head -1 | grep -qE '^state: DISABLED since .* \(sudo warden enable
 out="$(bash "$SRC/bin/warden" enable)"; rc=$?
 [ "$rc" -eq 0 ] && pass "enable exit 0" || fail "enable exit 0" "rc=$rc"
 [ ! -f "$WD/DISABLED" ] && pass "sentinel gone" || fail "sentinel gone"
-python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["sandbox"]["enabled"] is True and d["sandbox"]["failIfUnavailable"] is True' \
-  "$WARDEN_DEST/managed-settings.json" 2>/dev/null && pass "sandbox re-enabled" || fail "sandbox re-enabled"
-python3 -c 'import json,sys; u=json.load(open(sys.argv[1])); assert u["sandbox"]["enabled"] is True' \
-  "$WARDEN_USER_SETTINGS" 2>/dev/null && pass "fallback re-enabled" || fail "fallback re-enabled"
+# re-enable restores the WALLS in the seatbelt profile (native sandbox
+# stays off in both states)
+grep -q "deny file-write" "$WD/session.sb" && pass "seatbelt walls restored" || fail "seatbelt walls restored"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["sandbox"]["enabled"] is False' \
+  "$WARDEN_DEST/managed-settings.json" 2>/dev/null && pass "native sandbox stays off" || fail "native sandbox stays off"
 echo "$out" | grep -q "unenforced until restart" && pass "enable stale-session note" || fail "enable stale-session note" "$out"
 
 # 5: enable again is idempotent

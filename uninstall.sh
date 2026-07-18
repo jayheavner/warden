@@ -30,6 +30,14 @@ if [ -f "$WD/userfallback.py" ] && [ -f "$FB_HOME/.claude/settings.json" ]; then
   [ -n "${SUDO_USER:-}" ] && chown "$SUDO_USER" "$FB_HOME/.claude/settings.json" || true
 fi
 
+# launcher shim out: restore ~/.local/bin/claude to the real binary
+LAUNCHER="$FB_HOME/.local/bin/claude"
+if [ -L "$LAUNCHER" ] && [ "$(readlink "$LAUNCHER")" = "$WD/claude-shim" ] \
+   && [ -f "$WD/claude-real" ]; then
+  ln -sfn "$(cat "$WD/claude-real")" "$LAUNCHER"
+  [ -n "${SUDO_USER:-}" ] && chown -h "$SUDO_USER" "$LAUNCHER" || true
+fi
+
 rm -f "$DEST/managed-settings.json" /usr/local/bin/warden
 rm -rf "$DEST/warden"
 rmdir "$DEST" 2>/dev/null || true

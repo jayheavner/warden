@@ -174,23 +174,21 @@ def registry_roots(managed_root=MANAGED_ROOT_DEFAULT):
 
 
 def classify_bash(session_cwd, managed_root=MANAGED_ROOT_DEFAULT):
-    """Structural judgment for Bash: a session whose cwd is inside an
-    adopted shared checkout (and not inside a worktree) must not run shell
-    commands at all — the sandbox cannot freeze the tracked tree without
-    blowing the profile past ARG_MAX, so the tree wall for root-cwd
-    sessions is this denial. Command text is never parsed."""
+    """Structural tagging for Bash — never a denial. Warden blocks zero
+    commands: the seatbelt profile denies protected WRITES at the syscall
+    layer while every command runs and its network, credentials, and the
+    rest of the machine stay untouched. A trunk-cwd session gets its
+    commands tagged I4 in the audit trail (its writes bounce off the
+    seatbelt anyway); command text is never parsed."""
     cwd = _resolve(session_cwd)
     if worktree_container(cwd):
         return Verdict("none", "", "")
     root = shared_root(cwd)
     if root and root in registry_roots(managed_root):
         return Verdict(
-            "deny", "I4",
-            "warden I4: this session's working directory is trunk — the "
-            "shared checkout %s is read-only to every session, and work "
-            "never happens on trunk. Create or enter a worktree "
-            "(EnterWorktree) and work there; shell commands are denied "
-            "until you do." % root)
+            "audit", "I4",
+            "session cwd is trunk (%s); writes there bounce off the "
+            "seatbelt — enter a worktree to do real work" % root)
     return Verdict("none", "", "")
 
 
@@ -259,10 +257,7 @@ def main():
             else:
                 v = classify_bash(cwd)
                 _audit(dict(base, target=(tin.get("command") or "")[:500],
-                            verdict=v.decision if v.decision == "deny"
-                            else "audit", rule=v.rule))
-                if v.decision == "deny":
-                    _deny(event, v.reason)
+                            verdict="audit", rule=v.rule))
         elif event == "SessionStart":
             rcwd = _resolve(cwd)
             wt = worktree_container(rcwd)
@@ -284,8 +279,8 @@ def main():
                         "checkout %s is read-only to every session, and work "
                         "never happens on trunk. Create or enter a worktree "
                         "before doing any work (the app creates one per "
-                        "session); file tools and shell commands are denied "
-                        "until you do." % root}}))
+                        "session); until you do, writes here bounce off the "
+                        "seatbelt and everything is audited." % root}}))
             else:
                 _audit(dict(base, target=scope, verdict="session-start", rule=""))
                 print(json.dumps({"hookSpecificOutput": {

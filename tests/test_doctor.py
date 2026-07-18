@@ -43,19 +43,23 @@ class TestVerdicts(unittest.TestCase):
         self.assertEqual(access, "write")
 
 
-class TestVersionDrift(unittest.TestCase):
-    def test_pinned_version_is_quiet(self):
-        self.assertIsNone(doctor.version_drift(
-            doctor.PROVEN_ON_CLAUDE + " (Claude Code)"))
+class TestLauncherDrift(unittest.TestCase):
+    def test_governed_launcher_is_quiet(self):
+        self.assertIsNone(doctor.launcher_drift(
+            "/Library/Application Support/ClaudeCode/warden/claude-shim",
+            "/Users/u/.local/share/claude/versions/2.1.214"))
 
-    def test_moved_version_advises_reverification(self):
-        msg = doctor.version_drift("9.9.9 (Claude Code)", pinned="2.1.212")
-        self.assertIn("9.9.9", msg)
-        self.assertIn("2.1.212", msg)
-        self.assertIn("probe-write-precedence", msg)
+    def test_missing_launcher_flagged(self):
+        self.assertIn("not found", doctor.launcher_drift(None, "/x"))
 
-    def test_missing_cli_reported(self):
-        self.assertIn("not found", doctor.version_drift(""))
+    def test_repointed_launcher_flagged(self):
+        msg = doctor.launcher_drift("/some/other/claude", "/x")
+        self.assertIn("does NOT point at warden", msg)
+
+    def test_unresolvable_binary_flagged(self):
+        msg = doctor.launcher_drift(
+            "/Library/Application Support/ClaudeCode/warden/claude-shim", None)
+        self.assertIn("cannot resolve", msg)
 
 
 class TestStrayBytes(unittest.TestCase):
@@ -104,6 +108,37 @@ class TestStrayBytes(unittest.TestCase):
                                "f"), "w") as f:
             f.write("x")
         self.assertIn("clean", self._report())
+
+
+class TestSeatbeltVerdict(unittest.TestCase):
+    PROFILE = (
+        '(version 1)\n(allow default)\n'
+        '(deny file-write* (subpath "/Users/u/claude/alpha"))\n'
+        '(allow file-write* (subpath "/Users/u/claude/alpha/.claude/worktrees"))\n'
+        '(allow file-write* (subpath "/Users/u/claude/alpha/.git/refs"))\n'
+        '(deny file-write* (literal "/Users/u/claude/alpha/.git/refs/heads/main"))\n')
+
+    def test_trunk_write_denied(self):
+        v, _ = doctor.seatbelt_verdict("/Users/u/claude/alpha/README.md",
+                                       self.PROFILE)
+        self.assertEqual(v, "deny")
+
+    def test_worktree_reopened(self):
+        v, _ = doctor.seatbelt_verdict(
+            "/Users/u/claude/alpha/.claude/worktrees/w1/src/f.py",
+            self.PROFILE)
+        self.assertEqual(v, "allow")
+
+    def test_protected_ref_reclosed_last_match_wins(self):
+        # inside the .git/refs allow, but the ref literal deny comes later
+        v, _ = doctor.seatbelt_verdict(
+            "/Users/u/claude/alpha/.git/refs/heads/main", self.PROFILE)
+        self.assertEqual(v, "deny")
+
+    def test_novel_machine_path_allowed(self):
+        v, rule = doctor.seatbelt_verdict("/Users/u/.newtool/db", self.PROFILE)
+        self.assertEqual(v, "allow")
+        self.assertIn("allow default", rule)
 
 
 class TestCli(unittest.TestCase):

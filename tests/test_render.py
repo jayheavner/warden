@@ -50,63 +50,50 @@ class TestRender(unittest.TestCase):
     def test_scan_missing_parent_ok(self):
         self.assertEqual(render.scan_repos(["/no/such/dir"]), [])
 
-    def test_denywrite_entries(self):
-        repos = render.scan_repos([self.parent])
-        base = {"sandbox": {"filesystem": {"denyWrite": []}}}
-        out = render.render_settings(base, repos,
-                                     "/Library/Application Support/ClaudeCode")
-        deny = out["sandbox"]["filesystem"]["denyWrite"]
-        root = os.path.realpath(self.repo)
-        b = repos[0]["head_branch"]
-        # git tamper surfaces + branch trio + enforcement config only
-        for want in [root + "/.git/index", root + "/.git/HEAD",
-                     root + "/.git/config", root + "/.git/hooks",
-                     root + "/.git/info",
-                     root + "/.git/refs/heads/" + b,
-                     root + "/.git/refs/heads/" + b + ".lock",
-                     root + "/.git/logs/refs/heads/" + b,
-                     root + "/.claude/settings.json",
-                     "/Library/Application Support/ClaudeCode"]:
-            self.assertIn(want, deny)
-        # no tracked-tree enumeration (E2BIG) and no root-level deny
-        # (a write deny beats every allow beneath it — it would freeze
-        # the repo's worktrees and their shared-.git writes)
-        self.assertNotIn(root, deny)
-        self.assertNotIn(root + "/README.md", deny)
-        self.assertNotIn(root + "/docs", deny)
-
-    def test_fs_rule_ceiling(self):
-        repos = render.scan_repos([self.parent])
-        base = {"sandbox": {"filesystem": {"denyWrite": []}}}
-        os.environ["WARDEN_MAX_FS_RULES"] = "3"
-        try:
-            with self.assertRaises(SystemExit):
-                render.render_settings(base, repos,
-                                       "/Library/Application Support/ClaudeCode")
-        finally:
-            del os.environ["WARDEN_MAX_FS_RULES"]
-
-    def test_write_scope_is_deny_only(self):
-        # The write scope must never enumerate what tools may write — that
-        # list goes stale the day a new tool appears. The invariant: allow
-        # everything, deny only warden's protected surfaces (derived from
-        # repo scanning and governance files, never from tool knowledge).
-        repos = render.scan_repos([self.parent])
+    def test_claude_native_sandbox_is_off(self):
+        # Warden's own seatbelt profile is the wall; Claude Code's native
+        # sandbox must be OFF, because it cannot be filesystem-only — it
+        # forces a network proxy that breaks gh/Node TLS and denies
+        # keychain writes. Warden blocks zero networking, zero commands.
         tpl = os.path.join(os.path.dirname(__file__), "..",
                            "templates", "managed-settings.base.json")
         base = json.load(open(tpl))
-        out = render.render_settings(base, repos,
-                                     "/Library/Application Support/ClaudeCode")
-        allow = out["sandbox"]["filesystem"]["allowWrite"]
-        self.assertEqual(allow, ["/"])
-        deny = out["sandbox"]["filesystem"]["denyWrite"]
-        self.assertIn("~/.claude/settings.json", deny)
-        self.assertIn("~/.claude/settings.local.json", deny)
-        # no per-tool path may ever reappear in either list
-        for stale in ["~/.azure", "~/.aws", "~/.config", "~/.cache",
-                      "~/.local", "~/Library/Caches", "~/Library/Logs"]:
-            self.assertNotIn(stale, allow)
-            self.assertNotIn(stale, deny)
+        self.assertIs(base["sandbox"]["enabled"], False)
+        self.assertNotIn("filesystem", base["sandbox"])
+
+    def test_seatbelt_freezes_trunk_reopens_worktree(self):
+        # last-match-wins: deny the checkout, re-open worktrees + shared
+        # .git write set, re-close the protected HEAD-branch refs
+        repos = render.scan_repos([self.parent])
+        root = os.path.realpath(self.repo)
+        b = repos[0]["head_branch"]
+        sb = render.render_seatbelt(
+            repos, "/Library/Application Support/ClaudeCode")
+        self.assertIn('(deny file-write* (subpath "%s"))' % root, sb)
+        self.assertIn('(allow file-write* (subpath "%s/.claude/worktrees"))'
+                      % root, sb)
+        self.assertIn('(allow file-write* (subpath "%s/.git/objects"))'
+                      % root, sb)
+        self.assertIn('(deny file-write* (literal "%s/.git/refs/heads/%s"))'
+                      % (root, b), sb)
+        # managed root frozen; profile is valid seatbelt
+        self.assertIn('(deny file-write* (subpath "/Library/Application '
+                      'Support/ClaudeCode"))', sb)
+        self.assertTrue(sb.startswith("(version 1)\n(allow default)"))
+
+    def test_seatbelt_rule_order_deny_before_reopen(self):
+        # correctness hinges on order: the repo deny must precede its
+        # worktree/​.git allows, and the ref denies must come last
+        repos = render.scan_repos([self.parent])
+        root = os.path.realpath(self.repo)
+        b = repos[0]["head_branch"]
+        sb = render.render_seatbelt(
+            repos, "/Library/Application Support/ClaudeCode")
+        i_deny_repo = sb.index('(deny file-write* (subpath "%s"))' % root)
+        i_allow_wt = sb.index('(subpath "%s/.claude/worktrees"))' % root)
+        i_deny_ref = sb.index('(literal "%s/.git/refs/heads/%s"))' % (root, b))
+        self.assertLess(i_deny_repo, i_allow_wt)
+        self.assertLess(i_allow_wt, i_deny_ref)
 
     def test_check_mode_writes_nothing(self):
         settings = os.path.join(self.tmp.name, "ms.json")
@@ -129,9 +116,8 @@ class TestRender(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         s = json.load(open(settings))
         r = json.load(open(registry))
-        self.assertTrue(s["sandbox"]["enabled"])
-        self.assertTrue(s["sandbox"]["failIfUnavailable"])
-        self.assertFalse(s["sandbox"]["allowUnsandboxedCommands"])
+        # claude-native sandbox off — warden's seatbelt is the wall
+        self.assertIs(s["sandbox"]["enabled"], False)
         self.assertTrue(s["hooks"]["PreToolUse"])
         self.assertTrue(s["hooks"]["SessionStart"])
         self.assertEqual(s["env"]["WARDEN_ACTIVE"], "1")
@@ -162,26 +148,25 @@ class TestRender(unittest.TestCase):
         self.assertIn("includeIf", open(gc).read())
         self.assertFalse(os.path.exists(gc + ".tmp"))
 
-    def test_disabled_render_flips_sandbox_only(self):
-        def render_check(extra_args=None):
+    def test_disabled_seatbelt_is_allow_everything(self):
+        # the disable failsafe must ship a profile that imposes NO walls —
+        # a stale seatbelt must never re-impose isolation after a disable
+        sb_on = os.path.join(self.tmp.name, "on.sb")
+        sb_off = os.path.join(self.tmp.name, "off.sb")
+        for out, extra in [(sb_on, []), (sb_off, ["--disabled"])]:
             p = subprocess.run(["python3", render.__file__, "--scan",
                                 self.parent, "--base", TEMPLATE,
                                 "--write-settings", os.path.join(
                                     self.tmp.name, "ms.json"),
                                 "--write-registry", os.path.join(
                                     self.tmp.name, "reg.json"),
-                                "--check"] + (extra_args or []),
+                                "--write-seatbelt", out] + extra,
                                capture_output=True, text=True)
             self.assertEqual(p.returncode, 0, p.stderr)
-            return json.loads(p.stdout)["settings"]
-
-        on = render_check()
-        off = render_check(["--disabled"])
-        self.assertFalse(off["sandbox"]["enabled"])
-        self.assertFalse(off["sandbox"]["failIfUnavailable"])
-        off["sandbox"]["enabled"] = on["sandbox"]["enabled"]
-        off["sandbox"]["failIfUnavailable"] = on["sandbox"]["failIfUnavailable"]
-        self.assertEqual(on, off)
+        self.assertIn("deny file-write*", open(sb_on).read())
+        off = open(sb_off).read()
+        self.assertNotIn("deny", off)
+        self.assertIn("(allow default)", off)
 
     def test_hookspath_override_detected(self):
         repos = render.scan_repos([self.parent])

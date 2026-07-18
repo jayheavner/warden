@@ -1,84 +1,58 @@
 # Upstream asks — Claude Code sandbox
 
-Two capability gaps in Claude Code's native Bash sandbox force Warden's
-Claude-side tree protection down to git-level (guard judgment + audit)
-instead of byte-level syscall denial. Both were demonstrated live on
-2026-07-17 (Claude Code v2.1.212, macOS 15 Seatbelt backend). Each section
-below is written to be filed verbatim as a GitHub issue on
-`anthropics/claude-code` (or via `/feedback`). Status: **drafted, not yet
-filed** — filing publishes machine details, so it is the repo owner's call.
+**Status: both original asks RETIRED 2026-07-18 — solved on Warden's side by
+delivering its own Seatbelt profile instead of using Claude Code's settings
+compiler. Kept here as the record of why, and as the re-adoption trigger.**
 
-## Ask 1: allow-within-deny for write rules
+Warden no longer enables Claude Code's native Bash sandbox
+(`sandbox.enabled: false`). It renders its own macOS Seatbelt profile
+(`render_seatbelt` in `render.py`) and launches sessions wrapped in it via
+`sandbox-exec` (the `claude` shim). Every child process inherits the
+profile. This sidesteps two limitations that were fatal when the native
+sandbox was the delivery mechanism, and — critically — a third that was not
+a bug but a design conflict: the native sandbox has no filesystem-only mode.
 
-`sandbox.filesystem` read rules support both directions: a broad
-`denyRead` can contain a narrower `allowRead` (documented: "the narrower
-allow re-opens that part of the denied region"). Write rules support only
-deny-within-allow: a `denyWrite` beats every `allowWrite` at or beneath
-it, so a narrower allow can never re-open part of a denied region.
+## Why the native sandbox was dropped (the disqualifying facts)
 
-**Why it matters:** the policy "the whole machine is writable except these
-repo trees" is expressible today (`allowWrite: ["/"]` + per-repo
-`denyWrite`) — but only if nothing inside a denied repo may ever be
-written. Real repos contain things sessions must write: their own linked
-worktree under `<repo>/.claude/worktrees/<name>`, and the shared
-`.git/objects`, `.git/refs`, `.git/worktrees/<id>` that any worktree
-commit writes. With no allow-within-deny, a repo-root `denyWrite` freezes
-every worktree and kills `git commit` from all of them.
+1. **No filesystem-only mode.** The native sandbox forces a network proxy
+   that MITM-terminates TLS. Go-based CLIs (`gh`, `gcloud`, `terraform`)
+   and Node's `fetch` fail x509 verification because Seatbelt blocks their
+   path to the system trust store; `curl`/`git`/Python survive. It also
+   denies macOS Keychain writes, so in-session `gh auth refresh` fails.
+   None of this is configurable off: `allowedDomains: ["*"]` is ignored
+   (#56959), `enableWeakerNetworkIsolation` is not wired into Claude Code
+   (#28954), `excludedCommands` still gets the proxy env (#30619). Proven
+   live 2026-07-18. This directly violates Warden's goal — **block zero
+   networking, zero commands.**
 
-**Observed:** with `denyWrite: [<repo-root>]` and
-`allowWrite: [<repo-root>/.git/objects, ...]` rendered into managed
-settings, `git reset` from inside a freshly created worktree of that repo
-failed writing `.git/worktrees/<name>/index.lock` — the allow beneath the
-deny never took effect.
+2. **allow-within-deny for writes (was ask #1).** The native settings
+   compiler honored deny-inside-allow but not allow-inside-deny for writes,
+   so "freeze the repo but re-open its worktree" was inexpressible there.
+   Raw Seatbelt has always supported it (`tests/lab/EVIDENCE-2026-07-16.txt`,
+   66 passes; `probe-write-precedence.sh`). Going direct **uses the
+   capability that already existed at the OS layer.**
 
-**Ask:** apply the documented read-rule precedence (most specific path
-wins) to write rules as well.
+3. **profile-by-exec-argument / E2BIG (was ask #2).** The native sandbox
+   passed the profile as an exec argument; ~400 rules bricked every Bash
+   spawn. `sandbox-exec -f <file>` loads the profile from a file — no
+   argument-size ceiling. The `WARDEN_MAX_FS_RULES` guard and its whole
+   class of failure are gone.
 
-**This is a compiler gap, not an OS gap:** raw Seatbelt profiles express
-the nesting directly — Warden's own semantics lab runs
-`(deny file-write* (subpath <repo>))` followed by
-`(allow file-write* (subpath <worktree>))` and the full positive git op
-suite passes inside the re-opened subtree
-(`tests/lab/derive.sh`, recorded in `tests/lab/EVIDENCE-2026-07-16.txt`).
-The capability exists in the sandbox engine Claude Code already uses; the
-settings-to-profile compiler just doesn't emit it for write rules.
+## Re-adoption trigger (when to reconsider the native sandbox)
 
-**Retirement trigger:** `tests/lab/probe-write-precedence.sh` reports
-`RETIRED`. Then upgrade `render.py` to the byte-level tree freeze (one
-deny per repo root plus worktree/shared-`.git` allows) and delete the
-git-level-residual entry from [limitations.md](limitations.md).
+Only if Claude Code ships a **filesystem-only sandbox mode** — network
+isolation opt-out with filesystem rules intact — AND it expresses
+allow-within-deny for writes AND loads the profile by file. Until all three
+hold, Warden's own profile is strictly better for Warden's goals. If that
+mode ships, re-evaluate: a harness-native wall would survive
+`sandbox-exec` deprecation, which is the one durability risk below.
 
-## Ask 2: sandbox profile delivered by file, not exec argument
+## The residual risk Warden's approach carries
 
-The generated Seatbelt profile is passed to every Bash spawn as a single
-exec argument. Rule lists expand ~3 KB per filesystem rule in the profile,
-so at roughly 400 rules the command line exceeds ARG_MAX and **every Bash
-command in every governed session fails to start** (`E2BIG` — observed at
-383 `denyWrite` entries producing a 1.3 MB argument; even `echo ok` could
-not spawn). `failIfUnavailable: true` turns this into a total outage that
-the session cannot diagnose or repair from inside.
-
-**Why it matters:** per-path deny rules are the only byte-level protection
-primitive available (see Ask 1), and enumerating even one directory level
-of 18 repositories already crosses the ceiling. The rule budget, not the
-policy intent, becomes the design constraint.
-
-**Ask:** write the profile to a temp file and pass a path (Seatbelt
-supports profile-by-path), or otherwise remove rule-count from the exec
-argument budget. Failing that, refuse to start with a clear diagnostic
-instead of per-command `E2BIG`.
-
-**Retirement trigger:** a Claude Code release whose Bash spawns no longer
-carry the profile as an exec argument (re-test by raising
-`WARDEN_MAX_FS_RULES` in a disposable render and spawning from a fresh
-session). Then delete the ceiling (`MAX_FS_RULES_DEFAULT`) from
-`render.py` and the profile-size entry from
-[limitations.md](limitations.md).
-
-## What Warden does until these land
-
-Deny-only write scope with git tamper surfaces denied per repo
-(~9 rules/repo), guard-hook denial of file tools outside the session's own
-worktree, machine-wide `reference-transaction` hook for branch protection,
-full Bash audit, and `warden doctor` stray-byte detection at shared
-checkout roots. See [limitations.md](limitations.md).
+`sandbox-exec` is deprecated-but-present on macOS (has been for years; still
+ships and works). If Apple removes it, the launcher wrapping breaks and
+sessions would start ungoverned — `warden status` and selftest T21 detect
+that state (they check the session is actually wrapped), so it fails loud,
+not silent. The mitigation if that day comes is the re-adoption trigger
+above, or a Network Extension / endpoint-security wall. Tracked here so it
+is a watched constraint, not a surprise.

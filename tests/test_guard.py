@@ -111,19 +111,22 @@ class TestClassifyBash(unittest.TestCase):
         del os.environ["WARDEN_REGISTRY"]
         self.tmp.cleanup()
 
-    def test_bash_denied_at_adopted_shared_root(self):
+    def test_bash_never_denied_only_tagged_at_shared_root(self):
+        # warden blocks zero commands: a trunk-cwd session is TAGGED I4
+        # for the audit trail, never denied — its writes bounce off the
+        # seatbelt, but the command runs and its network stays untouched
         v = guard.classify_bash(self.repo)
-        self.assertEqual((v.decision, v.rule), ("deny", "I4"))
-        self.assertIn("worktree", v.reason)
+        self.assertEqual((v.decision, v.rule), ("audit", "I4"))
 
-    def test_bash_denied_in_subdir_of_shared_root(self):
+    def test_bash_tagged_in_subdir_of_shared_root(self):
         v = guard.classify_bash(os.path.join(self.repo, "docs"))
-        self.assertEqual(v.decision, "deny")
+        self.assertEqual(v.decision, "audit")
+        self.assertNotEqual(v.decision, "deny")
 
-    def test_bash_allowed_in_worktree(self):
+    def test_bash_untagged_in_worktree(self):
         self.assertEqual(guard.classify_bash(self.wt1).decision, "none")
 
-    def test_bash_allowed_outside_repos(self):
+    def test_bash_untagged_outside_repos(self):
         self.assertEqual(guard.classify_bash(self.tmp.name).decision, "none")
 
     def test_bash_allowed_at_unadopted_repo(self):

@@ -71,16 +71,11 @@ def merge(user, managed, user_settings_path, disabled=False):
     for d in managed.get("permissions", {}).get("deny", []):
         if d not in deny:
             deny.append(d)
-    sandbox = copy.deepcopy(managed["sandbox"])
-    fs_deny = sandbox.setdefault("filesystem", {}).setdefault("denyWrite", [])
-    for extra in (user_settings_path,):
-        if extra not in fs_deny:
-            fs_deny.append(extra)
-    sandbox["filesystem"]["denyWrite"] = sorted(set(fs_deny))
-    if disabled:
-        sandbox["enabled"] = False
-        sandbox["failIfUnavailable"] = False
-    out["sandbox"] = sandbox
+    # Native sandbox stays OFF: warden's own Seatbelt profile (delivered by
+    # the launcher shim, not the settings layer) is the wall. Re-enabling
+    # the native sandbox here would re-break gh/Node TLS and keychain in
+    # every session, which is the whole reason it was dropped.
+    out["sandbox"] = {"enabled": False}
     return out
 
 
@@ -180,9 +175,8 @@ def main(argv=None):
     _atomic_write(a.user_settings, result)
     if not os.path.exists(a.state):
         _atomic_write(a.state, state)
-    n = len(result["sandbox"]["filesystem"]["denyWrite"])
-    print("userfallback: delivered to %s (%d denyWrite entries%s)"
-          % (a.user_settings, n, ", DISABLED render" if a.disabled else ""))
+    print("userfallback: delivered to %s (hooks + env, native sandbox off%s)"
+          % (a.user_settings, ", DISABLED render" if a.disabled else ""))
     return 0
 
 

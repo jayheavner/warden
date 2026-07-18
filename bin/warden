@@ -24,9 +24,8 @@ rec = {"ok": verdict == "ok",
        "ts": datetime.datetime.now().astimezone().isoformat()}
 if verdict == "ok":
     reg = json.load(open(sys.argv[3]))
-    ms = json.load(open(sys.argv[4]))
+    json.load(open(sys.argv[4]))          # settings must still parse
     rec["repos"] = len(reg["repos"])
-    rec["deny"] = len(ms["sandbox"]["filesystem"]["denyWrite"])
 else:
     rec["error"] = sys.argv[3][:500]
 tmp = path + ".tmp"
@@ -104,7 +103,8 @@ PY
       --base "${WARDEN_BASE_OVERRIDE:-$WD/managed-settings.base.json}" \
       --write-settings "$DEST/managed-settings.json" \
       --write-registry "$WD/registry.json" \
-      --write-gitconfig "$WD/warden.gitconfig" || rollback
+      --write-gitconfig "$WD/warden.gitconfig" \
+      --write-seatbelt "$WD/session.sb" || rollback
     userfallback --disabled || rollback
     CWD_CODEX="${WARDEN_CODEX_DEST:-/etc/codex}/warden"
     if [ -d "$CWD_CODEX" ]; then
@@ -151,12 +151,21 @@ PY
     python3 - "$DEST/managed-settings.json" <<'PY' || reinstate
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["sandbox"]["enabled"] and d["sandbox"]["failIfUnavailable"]
-assert d["sandbox"]["allowUnsandboxedCommands"] is False
+assert d["sandbox"]["enabled"] is False   # warden's seatbelt is the wall
 assert d["hooks"]["PreToolUse"]
-print("policy verified: sandbox fail-closed, hooks wired,",
-      len(d["sandbox"]["filesystem"]["denyWrite"]), "denyWrite entries")
+print("policy verified: claude-native sandbox off, hooks wired")
 PY
+    # the wall must load before enforcement is declared on — but skip the
+    # live check when we're already inside a sandbox (sandbox-exec can't
+    # nest; a governed session or test harness would false-fail). Presence
+    # + parse is the fallback assertion there.
+    if command -v sandbox-exec >/dev/null 2>&1 && [ -z "${WARDEN_SEATBELT:-}" ] \
+       && [ -z "${WARDEN_DEST:-}" ]; then
+      sandbox-exec -f "$WD/session.sb" /usr/bin/true || reinstate
+      echo "seatbelt profile loads: $WD/session.sb"
+    elif [ ! -s "$WD/session.sb" ]; then
+      reinstate
+    fi
     if [ -z "${WARDEN_DEST:-}" ]; then
       launchctl bootstrap system /Library/LaunchDaemons/com.warden.refresh.plist 2>/dev/null || true
       launchctl print "system/$DAEMON_LABEL" >/dev/null 2>&1 || reinstate
@@ -181,11 +190,12 @@ PY
         --base "$BASE" \
         --write-settings "$DEST/managed-settings.json" \
         --write-registry "$WD/registry.json" \
-        --write-gitconfig "$WD/warden.gitconfig" 2>&1)"; then
+        --write-gitconfig "$WD/warden.gitconfig" \
+        --write-seatbelt "$WD/session.sb" 2>&1)"; then
       echo "$err"
       if [ "$(id -u)" -eq 0 ]; then
-        chown root:wheel "$DEST/managed-settings.json" "$WD/registry.json" "$WD/warden.gitconfig"
-        chmod 0644 "$DEST/managed-settings.json" "$WD/registry.json" "$WD/warden.gitconfig"
+        chown root:wheel "$DEST/managed-settings.json" "$WD/registry.json" "$WD/warden.gitconfig" "$WD/session.sb"
+        chmod 0644 "$DEST/managed-settings.json" "$WD/registry.json" "$WD/warden.gitconfig" "$WD/session.sb"
       fi
       # user-settings fallback must track the managed render (Enterprise
       # remote policy discards the policySettings layer; the user layer is
@@ -386,8 +396,21 @@ EOF
       echo "  sessions started before the disable still enforce Bash-write denials until restarted"
     fi
     n=$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(len(d["sandbox"]["filesystem"]["denyWrite"]))' "$DEST/managed-settings.json")
-    echo "warden: installed ($n denyWrite entries)"
+    echo "warden: installed ($n protected paths; wall: seatbelt profile)"
     echo "active in this shell: ${WARDEN_ACTIVE:-no (session started before install?)}"
+    # launcher governance: sessions are wrapped only if claude resolves
+    # through the shim; a re-pointed symlink means ungoverned sessions
+    LAUNCHER="/Users/${SUDO_USER:-$USER}/.local/bin/claude"
+    if [ -L "$LAUNCHER" ] && [ "$(readlink "$LAUNCHER")" = "$WD/claude-shim" ]; then
+      echo "launcher: governed ($LAUNCHER -> warden shim)"
+    else
+      echo "launcher: NOT GOVERNED — sessions start without warden's wall; run: sudo ./install.sh"
+    fi
+    if [ -f "$WD/session.sb" ]; then
+      echo "seatbelt: rendered ($(grep -c 'file-write' "$WD/session.sb") filesystem rules, profile-by-file)"
+    else
+      echo "seatbelt: MISSING — run: sudo warden refresh"
+    fi
     # claude delivery: the managed file alone proves nothing — on Claude
     # Enterprise accounts the remote org policy replaces that layer with its
     # own (typically empty) settings. Report the user-settings fallback and

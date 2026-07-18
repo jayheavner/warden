@@ -1,17 +1,6 @@
 {
   "sandbox": {
-    "enabled": true,
-    "failIfUnavailable": true,
-    "allowUnsandboxedCommands": false,
-    "filesystem": {
-      "allowWrite": [
-        "/"
-      ],
-      "denyWrite": [
-        "~/.claude/settings.json",
-        "~/.claude/settings.local.json"
-      ]
-    }
+    "enabled": false
   },
   "permissions": {
     "deny": [

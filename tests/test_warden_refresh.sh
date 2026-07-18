@@ -30,8 +30,9 @@ u = json.load(open(sys.argv[1]))
 assert u["env"]["WARDEN_ACTIVE"] == "1"
 assert any("warden/guard.py" in h.get("command", "")
            for ev in u["hooks"].values() for g in ev for h in g["hooks"])
-assert u["sandbox"]["enabled"] is True
-assert sys.argv[1] in u["sandbox"]["filesystem"]["denyWrite"]' \
+# native sandbox stays off — warden'"'"'s seatbelt profile is the wall,
+# not anything the settings layer can deliver
+assert u["sandbox"]["enabled"] is False' \
   "$WARDEN_USER_SETTINGS" 2>/dev/null \
   && pass "refresh delivers user-settings fallback" \
   || fail "refresh delivers user-settings fallback"

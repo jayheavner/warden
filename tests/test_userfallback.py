@@ -18,13 +18,7 @@ uf = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(uf)
 
 MANAGED = {
-    "sandbox": {
-        "enabled": True,
-        "failIfUnavailable": True,
-        "allowUnsandboxedCommands": False,
-        "filesystem": {"denyWrite": ["/Library/Application Support/ClaudeCode",
-                                     "/Users/u/claude/alpha/README.md"]},
-    },
+    "sandbox": {"enabled": False},
     "permissions": {
         "deny": ["Edit(//Library/Application Support/ClaudeCode/**)"],
     },
@@ -66,7 +60,7 @@ class TestMerge(unittest.TestCase):
         return uf.merge(copy.deepcopy(user if user is not None else USER),
                         MANAGED, SETTINGS_PATH, disabled=disabled)
 
-    def test_delivers_env_hooks_sandbox(self):
+    def test_delivers_env_hooks_sandbox_off(self):
         out = self.merged()
         self.assertEqual(out["env"]["WARDEN_ACTIVE"], "1")
         self.assertEqual(out["env"]["FOO"], "bar")
@@ -75,15 +69,10 @@ class TestMerge(unittest.TestCase):
         self.assertEqual(
             sum("warden/guard.py" in c for c in cmds), 2)
         self.assertIn("/Users/u/mine.sh", cmds)
-        self.assertTrue(out["sandbox"]["enabled"])
-        self.assertTrue(out["sandbox"]["failIfUnavailable"])
-        self.assertFalse(out["sandbox"]["allowUnsandboxedCommands"])
-
-    def test_sandbox_protects_settings_file_itself(self):
-        out = self.merged()
-        deny = out["sandbox"]["filesystem"]["denyWrite"]
-        self.assertIn(SETTINGS_PATH, deny)
-        self.assertIn("/Users/u/claude/alpha/README.md", deny)
+        # native sandbox stays off — the seatbelt profile is the wall, and
+        # re-enabling it here would re-break gh/keychain in every session
+        self.assertIs(out["sandbox"]["enabled"], False)
+        self.assertNotIn("filesystem", out["sandbox"])
 
     def test_permissions_deny_added_allow_preserved(self):
         out = self.merged()
@@ -98,10 +87,9 @@ class TestMerge(unittest.TestCase):
         twice = uf.merge(copy.deepcopy(once), MANAGED, SETTINGS_PATH)
         self.assertEqual(once, twice)
 
-    def test_disabled_keeps_hooks_drops_sandbox(self):
+    def test_disabled_keeps_hooks_sandbox_still_off(self):
         out = self.merged(disabled=True)
-        self.assertFalse(out["sandbox"]["enabled"])
-        self.assertFalse(out["sandbox"]["failIfUnavailable"])
+        self.assertIs(out["sandbox"]["enabled"], False)
         cmds = [h["command"] for g in out["hooks"]["SessionStart"]
                 for h in g["hooks"]]
         self.assertTrue(any("warden/guard.py" in c for c in cmds))

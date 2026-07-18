@@ -243,7 +243,9 @@ assert u.get("env", {}).get("WARDEN_ACTIVE") == "1"
 assert any("warden/guard.py" in h.get("command", "")
            for ev in u.get("hooks", {}).values()
            for g in ev for h in g.get("hooks", []))
-assert u["sandbox"]["filesystem"]["denyWrite"]
+# claude-native sandbox stays OFF in the fallback too — warden's seatbelt
+# is the wall; a re-enabled native sandbox would re-break gh/keychain
+assert u.get("sandbox", {}).get("enabled") is not True
 EOF
 then
   pass "T16 user-settings fallback delivered"
@@ -281,6 +283,33 @@ if ( : >> "$HOME/.claude/settings.json" ) 2>/dev/null; then
   fail "T17d user settings.json write blocked" "governance file writable — deny-within-allow is not holding"
 else
   pass "T17d user settings.json write blocked"
+fi
+
+# T20: network is UNRESTRICTED — the whole reason warden dropped Claude
+# Code's native sandbox for its own seatbelt profile. gh/git/curl must
+# reach GitHub with no proxy interference. A failure here means the
+# native sandbox crept back on and is re-breaking tools.
+if command -v gh >/dev/null 2>&1; then
+  if gh api /rate_limit >/dev/null 2>&1; then
+    pass "T20 gh reaches GitHub (no proxy TLS interference)"
+  else
+    fail "T20 gh reaches GitHub (no proxy TLS interference)" "gh TLS failing — native sandbox proxy is back; confirm sandbox.enabled=false and reinstall"
+  fi
+else
+  skip "T20 gh network" "gh not installed"
+fi
+if curl -sI -m 8 https://api.github.com -o /dev/null 2>/dev/null; then
+  pass "T20b curl reaches an arbitrary host (network unrestricted)"
+else
+  fail "T20b curl reaches an arbitrary host" "network egress blocked — warden must never restrict network"
+fi
+
+# T21: this session is wrapped in warden's seatbelt (the wall), proving
+# the launcher shim ran. WARDEN_SEATBELT is exported only by the shim.
+if [ "${WARDEN_SEATBELT:-}" = "1" ]; then
+  pass "T21 session launched through warden's seatbelt wall"
+else
+  fail "T21 session launched through warden's seatbelt wall" "session not wrapped — launcher shim didn't run; check: warden status (launcher line)"
 fi
 
 # T19: credential store (macOS keychain) writable — gh/az refresh their
@@ -342,8 +371,10 @@ fi
 
 echo
 echo "== result: $PASSN pass, $FAILN fail, $SKIPN skip"
-echo "== manual check remaining: ask this session to retry a blocked write with the"
-echo "   Bash dangerouslyDisableSandbox parameter — it must STILL be blocked"
-echo "   (allowUnsandboxedCommands=false). Audit trail: ~/.claude/warden/audit.jsonl"
+echo "== manual check remaining: from a PLAIN terminal (sandbox-exec cannot"
+echo "   nest inside a governed session), run the full wall proof:"
+echo "     bash tests/lab/probe-session-profile.sh   (in the warden repo)"
+echo "   It asserts every trunk/.git write is blocked AND network + home +"
+echo "   worktree writes are allowed. Audit trail: ~/.claude/warden/audit.jsonl"
 echo "   and: log show --last 1h --predicate 'eventMessage CONTAINS \"warden\"'"
 [ "$FAILN" -eq 0 ]

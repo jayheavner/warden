@@ -129,9 +129,27 @@ if [ -e "$LAUNCHER" ]; then
     printf '%s' "$REAL" > "$WD/claude-real"
     chmod 0644 "$WD/claude-real"
   fi
+  # PRE-FLIGHT: prove the shim actually launches Claude BEFORE repointing
+  # the launcher. This is the check that would have prevented bricking
+  # Claude — a shim that can't launch must never replace the symlink.
+  # `claude --version` reaches the real binary through the shim; if it
+  # can't, we refuse to repoint and leave the user's launcher untouched.
+  set +e
+  SHIM_OUT="$(sudo -u "${SUDO_USER:-$USER}" env WARDEN_DEST="$DEST" \
+    bash "$WD/claude-shim" --version </dev/null 2>&1)"
+  SHIM_RC=$?
+  set -e
+  if [ "$SHIM_RC" -ne 0 ]; then
+    echo "FATAL: the warden shim could not launch Claude (rc=$SHIM_RC):" >&2
+    echo "  $SHIM_OUT" >&2
+    echo "  REFUSING to repoint $LAUNCHER — your Claude launcher is UNCHANGED." >&2
+    echo "  Warden's hooks and git protection are installed; the seatbelt wall" >&2
+    echo "  is not active until the shim works. Report this output." >&2
+    exit 1
+  fi
   ln -sfn "$WD/claude-shim" "$LAUNCHER"
   [ -n "${SUDO_USER:-}" ] && chown -h "$SUDO_USER" "$LAUNCHER" || true
-  echo "launcher governed: $LAUNCHER -> warden shim -> $(cat "$WD/claude-real" 2>/dev/null || echo '(version auto-resolve)')"
+  echo "launcher governed: shim launch-tested OK, $LAUNCHER -> warden shim"
 else
   echo "WARNING: no claude launcher at $LAUNCHER — sessions will start ungoverned."
   echo "  Launch governed sessions via: \"$WD/claude-shim\""

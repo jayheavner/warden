@@ -92,6 +92,21 @@ watched durability risk (`sandbox-exec` deprecation) and its detector.
   (via an environment variable, a command-line flag, or a pre-existing local
   git setting).
 
+- **The launcher must never block Claude from starting (IRON RULE).** The
+  wall is applied by a shim that `~/.local/bin/claude` points to. If the
+  shim could fail to launch Claude, Warden would brick the tool it governs
+  — which happened once (2026-07-18: a Seatbelt profile that failed to
+  load, combined with `exec sandbox-exec`, meant Claude never started).
+  Two independent guarantees prevent recurrence: (1) the shim probes
+  whether the profile loads and, on ANY failure — missing profile, missing
+  binary, `sandbox-exec` absent, profile load error — falls through to
+  launching Claude ungoverned with a warning (never `exec`s the probe);
+  (2) the installer launch-tests the shim (`claude --version` through it)
+  and REFUSES to repoint the launcher if it can't reach Claude, leaving
+  the user's launcher untouched. Regression-guarded by `tests/test_shim.sh`
+  (every failure path still launches). Governance is best-effort;
+  launching is non-negotiable.
+
 - **Sessions whose working directory is a shared repo root.** Such a session
   gets a session-start warning telling it to enter a worktree. Its Bash
   commands are **not blocked** (Warden blocks zero commands) — they run,

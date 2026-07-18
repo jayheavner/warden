@@ -80,7 +80,9 @@ job, not a bug. The full derivation lives in
   beats every allow beneath it (both proven live 2026-07-17; the fix is an
   upstream sandbox capability, allow-within-deny for writes — Codex's
   engine already has it, which is why the Codex side keeps its per-entry
-  byte-level tree freeze). What holds everywhere regardless: file tools are
+  byte-level tree freeze; the filed-ready request with evidence is
+  [upstream-asks.md](upstream-asks.md)). What holds everywhere regardless:
+  file tools are
   guard-denied outside the session's own worktree (I1–I3), commits and ref
   moves against protected trees are impossible (tamper surfaces frozen, R2
   hook), so stray bytes cannot enter history or reach origin and `git

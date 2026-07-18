@@ -115,6 +115,45 @@ def explain_path(raw):
           "settings, hooks, and skills files, at every scope).")
 
 
+def dirty_shared_checkouts():
+    """Uncommitted changes sitting at shared checkout roots. Sessions can
+    never commit there, so unexplained bytes are either a human's
+    in-progress work or a session's stray shell write — surface them
+    instead of letting them sit invisible until a land fails. Worktree
+    plumbing under .claude/ is not a signal and is excluded."""
+    import subprocess
+    reg = (os.environ.get("WARDEN_REGISTRY")
+           or os.path.join(MANAGED, "warden", "registry.json"))
+    try:
+        repos = json.load(open(reg))["repos"]
+    except (OSError, ValueError, KeyError):
+        return
+    dirty = []
+    for r in repos:
+        try:
+            p = subprocess.run(
+                ["git", "-C", r["root"], "status", "--porcelain"],
+                capture_output=True, text=True, timeout=15)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        hits = [ln for ln in p.stdout.splitlines()
+                if ln[3:] and not ln[3:].startswith(".claude/")]
+        if p.returncode == 0 and hits:
+            dirty.append((r["root"], hits))
+    if not dirty:
+        print("shared checkouts: clean (no uncommitted bytes at any root)")
+        return
+    print("shared checkouts with uncommitted bytes (%d):" % len(dirty))
+    for root, hits in dirty:
+        print("  %s (%d path%s, e.g. %s)"
+              % (root, len(hits), "" if len(hits) == 1 else "s",
+                 hits[0][3:]))
+    print("  If you didn't put them there, a session's shell did — the "
+          "audit trail (~/.claude/warden/audit.jsonl) records every "
+          "session command. Stray tracked-file bytes are recoverable "
+          "with git checkout; history and refs were never movable.")
+
+
 def recent_denials(limit=10):
     path = (os.environ.get("WARDEN_AUDIT_FILE")
             or os.path.expanduser("~/.claude/warden/audit.jsonl"))
@@ -159,6 +198,7 @@ def main(argv=None):
               "sessions." % since)
     else:
         print("state: enabled")
+    dirty_shared_checkouts()
     recent_denials()
     return 0
 

@@ -43,6 +43,54 @@ class TestVerdicts(unittest.TestCase):
         self.assertEqual(access, "write")
 
 
+class TestStrayBytes(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = os.path.join(self.tmp.name, "alpha")
+        for cmd in [["git", "init", self.repo],
+                    ["git", "-C", self.repo, "config", "user.email", "t@t"],
+                    ["git", "-C", self.repo, "config", "user.name", "t"]]:
+            subprocess.run(cmd, check=True, capture_output=True)
+        with open(os.path.join(self.repo, "README.md"), "w") as f:
+            f.write("x")
+        subprocess.run(["git", "-C", self.repo, "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", self.repo, "commit", "-m", "init"],
+                       check=True, capture_output=True)
+        self.reg = os.path.join(self.tmp.name, "registry.json")
+        with open(self.reg, "w") as f:
+            json.dump({"repos": [{"root": self.repo}]}, f)
+        os.environ["WARDEN_REGISTRY"] = self.reg
+
+    def tearDown(self):
+        del os.environ["WARDEN_REGISTRY"]
+        self.tmp.cleanup()
+
+    def _report(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            doctor.dirty_shared_checkouts()
+        return out.getvalue()
+
+    def test_clean_checkout_reports_clean(self):
+        self.assertIn("clean", self._report())
+
+    def test_stray_bytes_surfaced(self):
+        with open(os.path.join(self.repo, "README.md"), "a") as f:
+            f.write("stray")
+        rep = self._report()
+        self.assertIn(self.repo, rep)
+        self.assertIn("README.md", rep)
+        self.assertIn("audit trail", rep)
+
+    def test_worktree_plumbing_not_a_signal(self):
+        os.makedirs(os.path.join(self.repo, ".claude", "worktrees", "w1"))
+        with open(os.path.join(self.repo, ".claude", "worktrees", "w1",
+                               "f"), "w") as f:
+            f.write("x")
+        self.assertIn("clean", self._report())
+
+
 class TestCli(unittest.TestCase):
     def test_recent_denials_reads_audit(self):
         with tempfile.TemporaryDirectory() as d:
